@@ -7,7 +7,6 @@ mod types;
 #[proc_macro]
 pub fn class(item: TokenStream) -> TokenStream {
     let class_value = parse_macro_input!(item as types::class::ClassDef);
-    println!("{:#?}", class_value);
-    println!("gurt! {}", quote! { #class_value });
+    println!("{}", quote! { #class_value });
     quote! { #class_value }.into()
 }

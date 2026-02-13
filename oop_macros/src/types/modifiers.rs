@@ -34,7 +34,6 @@ impl Parse for ClassVisibility {
 impl ToTokens for ClassVisibility {
     fn to_tokens(&self, tokens: &mut TokenStream2) {
         match self {
-            ClassVisibility::Private => tokens.extend(quote! { priv }),
             ClassVisibility::Public => tokens.extend(quote! { pub }),
             _ => {}
         }
