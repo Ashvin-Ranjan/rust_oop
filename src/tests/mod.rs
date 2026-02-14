@@ -5,7 +5,7 @@ class! {
         let x: i32;
         let y: i32;
 
-        pub static fn init(x: i32, y: i32) -> Gurt {
+        pub Gurt(x: i32, y: i32) {
             self::_default_constructor(x, y)
         }
         pub static fn test_gurt() {

@@ -10,9 +10,12 @@ use crate::{
         class::{ClassDefinition, MacroBlock},
         items::ClassItem,
     },
-    repr::items::{
-        LocalClassFieldInformation, LocalClassMethodInformation, StaticClassFieldInformation,
-        StaticClassMethodInformation,
+    repr::{
+        items::{
+            LocalClassFieldInformation, LocalClassMethodInformation, StaticClassFieldInformation,
+            StaticClassMethodInformation,
+        },
+        keywords::CONSTRUCTOR_KW,
     },
 };
 
@@ -90,6 +93,7 @@ impl ClassInformation {
         let mut local_fields = IndexMap::new();
         let mut static_methods = HashMap::new();
         let mut local_methods = HashMap::new();
+        let mut encountered_constructor = false;
         for item in class.items {
             match item {
                 ClassItem::ClassField(field) => {
@@ -114,10 +118,31 @@ impl ClassInformation {
                     }
                 }
                 ClassItem::ClassConstructor(constructor) => {
-                    return Err(syn::Error::new(
-                        constructor.ident.span(),
-                        "Constructors are currently not supported, use static functions instead.",
-                    ));
+                    if encountered_constructor {
+                        return Err(syn::Error::new(
+                            constructor.ident.span(),
+                            "Cannot declare multiple constructors.",
+                        ));
+                    }
+                    let owned_kw = CONSTRUCTOR_KW.to_owned();
+                    if static_methods.contains_key(&owned_kw) {
+                        // Might be better to do the ident check ahead of this but it's ok for now
+                        return Err(syn::Error::new(
+                            constructor.ident.span(),
+                            format!(
+                                "Static function named `{}` (which this will be mapped to) already exists.",
+                                CONSTRUCTOR_KW
+                            ),
+                        ));
+                    }
+                    static_methods.insert(
+                        owned_kw,
+                        StaticClassMethodInformation::construct_from_constructor(
+                            constructor,
+                            &ident.to_string(),
+                        )?,
+                    );
+                    encountered_constructor = true;
                 }
                 ClassItem::ClassMethod(method) => {
                     let string = method.ident.to_string();
@@ -137,11 +162,12 @@ impl ClassInformation {
                                 format!("Static method `{}` is already defined", string),
                             ));
                         }
-                        static_methods
-                            .insert(string, StaticClassMethodInformation::construct(method)?);
+                        static_methods.insert(
+                            string,
+                            StaticClassMethodInformation::construct_from_method(method)?,
+                        );
                     }
                 }
-                _ => {}
             }
         }
 
@@ -193,7 +219,7 @@ impl ClassInformation {
 
         let compiled_static_methods: Vec<TokenStream2> = static_methods
             .values()
-            .map(|x| x.compile(generics))
+            .map(|x| x.compile(generics, ident))
             .collect();
 
         let compiled_local_methods: Vec<TokenStream2> =

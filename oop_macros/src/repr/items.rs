@@ -1,14 +1,14 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use proc_macro2::TokenStream as TokenStream2;
-use quote::quote;
+use quote::{format_ident, quote};
 use syn::{
     Block, Expr, Generics, Ident, ReturnType, Token, Type, punctuated::Punctuated, spanned::Spanned,
 };
 
 use crate::{
     ast::items::{ClassConstructor, ClassField, ClassMethod, MethodArgument},
-    repr::keywords::SELF_KW,
+    repr::keywords::{CONSTRUCTOR_KW, SELF_KW},
 };
 
 #[derive(Debug)]
@@ -116,48 +116,18 @@ impl LocalClassFieldInformation {
     }
 }
 
-pub struct ClassConstructorInformation {
-    is_public: bool,
-    ident: Ident,
-    args: Punctuated<MethodArgument, Token![,]>,
-    block: Block,
-}
-
-impl ClassConstructorInformation {
-    pub fn construct(constructor: ClassConstructor, class_name: &String) -> syn::Result<Self> {
-        let is_public = !constructor.pub_kw.is_none();
-        let ident = constructor.ident;
-        if ident.to_string() != *class_name {
-            return Err(syn::Error::new(
-                ident.span(),
-                format!(
-                    "Constructor of class `{}` must have name `{}`. Please rename the constructor or declare it as a static function.",
-                    class_name, class_name
-                ),
-            ));
-        }
-        let args = constructor.arguments;
-        let block = constructor.block;
-        Ok(ClassConstructorInformation {
-            is_public,
-            ident,
-            args,
-            block,
-        })
-    }
-}
-
 #[derive(Debug)]
 pub struct StaticClassMethodInformation {
     is_public: bool,
+    is_constructor: bool,
     ident: Ident,
     args: Vec<MethodArgumentInformation>,
-    return_type: ReturnType,
+    return_type: Option<ReturnType>,
     block: Block,
 }
 
 impl StaticClassMethodInformation {
-    pub fn construct(method: ClassMethod) -> syn::Result<Self> {
+    pub fn construct_from_method(method: ClassMethod) -> syn::Result<Self> {
         if method.static_kw.is_none() {
             panic!(
                 "Internal State Error: StaticClassMethodInformation called with non-static field"
@@ -171,25 +141,9 @@ impl StaticClassMethodInformation {
         }
         let is_public = !method.pub_kw.is_none();
         let ident = method.ident;
-        let args = method
-            .arguments
-            .into_iter()
-            .map(|x| MethodArgumentInformation::construct(x))
-            .collect::<syn::Result<Vec<MethodArgumentInformation>>>()?;
+        let args = MethodArgumentInformation::construct_from_list(method.arguments, false)?;
 
-        let mut arg_names = HashSet::new();
-        for arg in &args {
-            if arg_names.contains(&arg.ident.to_string()) {
-                return Err(syn::Error::new(
-                    arg.ident.span(),
-                    format!("Duplicate definition of argument `{}`.", arg.ident),
-                ));
-            } else {
-                arg_names.insert(arg.ident.to_string());
-            }
-        }
-
-        let return_type = method.return_type;
+        let return_type = Some(method.return_type);
         let block = method.block;
         if !method.generics.params.is_empty() {
             return Err(syn::Error::new(
@@ -199,6 +153,7 @@ impl StaticClassMethodInformation {
         }
         Ok(StaticClassMethodInformation {
             is_public,
+            is_constructor: false,
             ident,
             args,
             return_type,
@@ -206,9 +161,35 @@ impl StaticClassMethodInformation {
         })
     }
 
-    pub fn compile(&self, generics: &Generics) -> TokenStream2 {
+    pub fn construct_from_constructor(
+        constructor: ClassConstructor,
+        class_name: &String,
+    ) -> syn::Result<Self> {
+        let is_public = !constructor.pub_kw.is_none();
+        if constructor.ident.to_string() != *class_name {
+            return Err(syn::Error::new(
+                constructor.ident.span(),
+                format!("Constructor must be named `{}`.", class_name),
+            ));
+        }
+        let ident = format_ident!("{}", CONSTRUCTOR_KW);
+        let args = MethodArgumentInformation::construct_from_list(constructor.arguments, false)?;
+        let block = constructor.block;
+
+        Ok(StaticClassMethodInformation {
+            is_public,
+            is_constructor: true,
+            ident,
+            args,
+            return_type: None,
+            block,
+        })
+    }
+
+    pub fn compile(&self, generics: &Generics, class_ident: &Ident) -> TokenStream2 {
         let StaticClassMethodInformation {
             is_public,
+            is_constructor,
             ident,
             args,
             return_type,
@@ -225,8 +206,20 @@ impl StaticClassMethodInformation {
 
         let args_compiled: Vec<TokenStream2> = args.iter().map(|x| x.compile()).collect();
 
+        let mut ret_val = quote! { #return_type };
+        if *is_constructor {
+            if !return_type.is_none() {
+                panic!("Internal State Error: `return_type` is not `None` in constructor");
+            }
+            ret_val = quote! { -> #class_ident }
+        } else if return_type.is_none() {
+            panic!(
+                "Internal State Error: `return_type` is `None` in non-constructor static method."
+            );
+        }
+
         quote! {
-            #field_visibility fn #ident #generics (#(#args_compiled ,)*) #return_type #where_clause #block
+            #field_visibility fn #ident #generics (#(#args_compiled ,)*) #ret_val #where_clause #block
         }
     }
 }
@@ -249,30 +242,7 @@ impl LocalClassMethodInformation {
         let is_public = !method.pub_kw.is_none();
         let is_constant = !method.const_kw.is_none();
         let ident = method.ident;
-        let args = method
-            .arguments
-            .into_iter()
-            .map(|x| MethodArgumentInformation::construct(x))
-            .collect::<syn::Result<Vec<MethodArgumentInformation>>>()?;
-
-        let mut arg_names = HashSet::new();
-        for arg in &args {
-            let ident_string = arg.ident.to_string();
-            if ident_string == SELF_KW {
-                return Err(syn::Error::new(
-                    arg.ident.span(),
-                    format!("`{}` is a reserved keyword for local functions.", SELF_KW),
-                ));
-            }
-            if arg_names.contains(&ident_string) {
-                return Err(syn::Error::new(
-                    arg.ident.span(),
-                    format!("Duplicate definition of argument `{}`.", arg.ident),
-                ));
-            } else {
-                arg_names.insert(ident_string);
-            }
-        }
+        let args = MethodArgumentInformation::construct_from_list(method.arguments, true)?;
 
         let return_type = method.return_type;
         let block = method.block;
@@ -340,5 +310,34 @@ impl MethodArgumentInformation {
         quote! {
             #ident : #ty
         }
+    }
+
+    pub fn construct_from_list(
+        raw_args: Punctuated<MethodArgument, Token![,]>,
+        self_reserved: bool,
+    ) -> syn::Result<Vec<MethodArgumentInformation>> {
+        let args = raw_args
+            .into_iter()
+            .map(|x| MethodArgumentInformation::construct(x))
+            .collect::<syn::Result<Vec<MethodArgumentInformation>>>()?;
+
+        let mut arg_names = HashSet::new();
+        for arg in &args {
+            if self_reserved && arg.ident.to_string() == SELF_KW {
+                return Err(syn::Error::new(
+                    arg.ident.span(),
+                    format!("`{}` is a resreved keyword in local functions.", SELF_KW),
+                ));
+            }
+            if arg_names.contains(&arg.ident.to_string()) {
+                return Err(syn::Error::new(
+                    arg.ident.span(),
+                    format!("Duplicate definition of argument `{}`.", arg.ident),
+                ));
+            } else {
+                arg_names.insert(arg.ident.to_string());
+            }
+        }
+        Ok(args)
     }
 }

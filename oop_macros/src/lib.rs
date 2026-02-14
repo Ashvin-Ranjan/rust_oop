@@ -6,8 +6,6 @@ use crate::repr::class::MacroInformation;
 
 mod ast;
 mod repr;
-mod types;
-mod validate;
 
 #[proc_macro]
 pub fn class(item: TokenStream) -> TokenStream {
