@@ -1,25 +1,24 @@
-use std::fmt::Display;
-
 use super::*;
 
 class! {
-    class Gurt<T> where T: Display {
-        let x: T;
-        let static y: i32 = 67;
-        pub Gurt(_x: T) {
-            Gurt::_default_constructor(_x)
+    pub class Gurt {
+        let x: i32;
+        let y: i32;
+
+        pub static fn init(x: i32, y: i32) -> Gurt {
+            self::_default_constructor(x, y)
         }
         pub static fn test_gurt() {
             println!("YO GURT");
         }
-        pub fn test_gurt_instance(x: T) {
-            println!("gurt... {} {} {}", self.x, x, Gurt::<T>::y);
+        pub const fn display_self() {
+            println!("gurt... {} {}", self.x, self.y);
         }
     }
 }
 
 #[test]
 fn it_works() {
-    Gurt::<u32>::test_gurt();
-    (Gurt::<u32>::init(342)).test_gurt_instance(12);
+    let gurt = Gurt::init(342, 20);
+    gurt.display_self();
 }
