@@ -51,7 +51,7 @@ impl Parse for ClassDefinition {
         let colon = input.parse::<Option<Token![:]>>()?;
         let mut parents = Punctuated::new();
         if colon.is_some() {
-            while (!input.peek(Token![where]) && !input.peek(Brace)) {
+            while !input.peek(Token![where]) && !input.peek(Brace) {
                 parents.push_value(input.parse::<Ident>()?);
                 if input.peek(Token![where]) || input.peek(Brace) {
                     break;

@@ -121,6 +121,7 @@ pub struct StaticClassMethodInformation {
     is_public: bool,
     is_constructor: bool,
     ident: Ident,
+    generics: Generics,
     args: Vec<MethodArgumentInformation>,
     return_type: Option<ReturnType>,
     block: Block,
@@ -141,20 +142,15 @@ impl StaticClassMethodInformation {
         }
         let is_public = !method.pub_kw.is_none();
         let ident = method.ident;
+        let generics = method.generics;
         let args = MethodArgumentInformation::construct_from_list(method.arguments, false)?;
-
         let return_type = Some(method.return_type);
         let block = method.block;
-        if !method.generics.params.is_empty() {
-            return Err(syn::Error::new(
-                method.generics.span(),
-                "Generics in class methods is currently not supported.",
-            ));
-        }
         Ok(StaticClassMethodInformation {
             is_public,
             is_constructor: false,
             ident,
+            generics,
             args,
             return_type,
             block,
@@ -173,6 +169,7 @@ impl StaticClassMethodInformation {
             ));
         }
         let ident = format_ident!("{}", CONSTRUCTOR_KW);
+        let generics = constructor.generics;
         let args = MethodArgumentInformation::construct_from_list(constructor.arguments, false)?;
         let block = constructor.block;
 
@@ -180,17 +177,19 @@ impl StaticClassMethodInformation {
             is_public,
             is_constructor: true,
             ident,
+            generics,
             args,
             return_type: None,
             block,
         })
     }
 
-    pub fn compile(&self, generics: &Generics, class_ident: &Ident) -> TokenStream2 {
+    pub fn compile(&self, class_generics: &Generics, class_ident: &Ident) -> TokenStream2 {
         let StaticClassMethodInformation {
             is_public,
             is_constructor,
             ident,
+            generics,
             args,
             return_type,
             block,
@@ -202,8 +201,6 @@ impl StaticClassMethodInformation {
             quote! {}
         };
 
-        let where_clause = &generics.where_clause;
-
         let args_compiled: Vec<TokenStream2> = args.iter().map(|x| x.compile()).collect();
 
         let mut ret_val = quote! { #return_type };
@@ -211,15 +208,19 @@ impl StaticClassMethodInformation {
             if !return_type.is_none() {
                 panic!("Internal State Error: `return_type` is not `None` in constructor");
             }
-            ret_val = quote! { -> #class_ident }
+            ret_val = quote! { -> #class_ident #class_generics }
         } else if return_type.is_none() {
             panic!(
                 "Internal State Error: `return_type` is `None` in non-constructor static method."
             );
         }
 
+        let combined_generics = merge_generics(generics, class_generics);
+
+        let where_clause = &combined_generics.where_clause;
+
         quote! {
-            #field_visibility fn #ident #generics (#(#args_compiled ,)*) #ret_val #where_clause #block
+            #field_visibility fn #ident #combined_generics (#(#args_compiled ,)*) #ret_val #where_clause #block
         }
     }
 }
@@ -229,6 +230,7 @@ pub struct LocalClassMethodInformation {
     is_public: bool,
     is_constant: bool,
     ident: Ident,
+    generics: Generics,
     args: Vec<MethodArgumentInformation>,
     return_type: ReturnType,
     block: Block,
@@ -242,20 +244,16 @@ impl LocalClassMethodInformation {
         let is_public = !method.pub_kw.is_none();
         let is_constant = !method.const_kw.is_none();
         let ident = method.ident;
+        let generics = method.generics;
         let args = MethodArgumentInformation::construct_from_list(method.arguments, true)?;
 
         let return_type = method.return_type;
         let block = method.block;
-        if !method.generics.params.is_empty() {
-            return Err(syn::Error::new(
-                method.generics.span(),
-                "Generics in class methods is currently not supported.",
-            ));
-        }
         Ok(LocalClassMethodInformation {
             is_public,
             is_constant,
             ident,
+            generics,
             args,
             return_type,
             block,
@@ -267,6 +265,7 @@ impl LocalClassMethodInformation {
             is_public,
             is_constant,
             ident,
+            generics,
             args,
             return_type,
             block,
@@ -286,8 +285,10 @@ impl LocalClassMethodInformation {
 
         let args_compiled: Vec<TokenStream2> = args.iter().map(|x| x.compile()).collect();
 
+        let where_clause = &generics.where_clause;
+
         quote! {
-            #field_visibility fn #ident (#reciever, #(#args_compiled ,)*) #return_type #block
+            #field_visibility fn #ident #generics (#reciever, #(#args_compiled ,)*) #return_type #where_clause #block
         }
     }
 }
@@ -340,4 +341,23 @@ impl MethodArgumentInformation {
         }
         Ok(args)
     }
+}
+
+/// Note, does not check for deduplication
+fn merge_generics(g1: &Generics, g2: &Generics) -> Generics {
+    let mut output = g1.clone();
+    output.params.extend(g2.params.clone());
+
+    if let Some(w2) = g2.where_clause.clone() {
+        match &mut output.where_clause {
+            Some(w1) => {
+                // Both have where clauses - extend predicates
+                w1.predicates.extend(w2.predicates);
+            }
+            None => {
+                output.where_clause = Some(w2);
+            }
+        }
+    }
+    output
 }
