@@ -1,9 +1,9 @@
-use std::collections::{HashMap, HashSet};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use indexmap::IndexMap;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
-use syn::{Generics, Ident, spanned::Spanned};
+use syn::{Generics, Ident};
 
 use crate::{
     ast::{
@@ -11,20 +11,51 @@ use crate::{
         items::ClassItem,
     },
     repr::{
+        graph::DependencyGraph,
         items::{
             LocalClassFieldInformation, LocalClassMethodInformation, StaticClassFieldInformation,
             StaticClassMethodInformation,
         },
-        keywords::CONSTRUCTOR_KW,
+        keywords::{CLASS_CONTINER_KW, CONSTRUCTOR_KW},
     },
 };
 
 #[derive(Debug)]
 pub struct MacroInformation {
-    classes: HashMap<String, ClassInformation>,
+    pub(super) classes: HashMap<String, RefCell<ClassInformation>>,
 }
 
 impl MacroInformation {
+    pub fn pre_comp(block: MacroBlock) -> syn::Result<Self> {
+        let mut output = MacroInformation::construct(block)?;
+        let dep_graph = DependencyGraph::construct_dependency_graph(&output)?;
+        let findable = dep_graph.waterfall_dependencies(&mut output)?;
+        if findable.len() != output.classes.keys().len() {
+            // There exists a cycle in the graph
+            let mut error: Option<syn::Error> = None;
+            for (key, class) in output.classes {
+                if !findable.contains(&key) {
+                    let key_error = syn::Error::new(
+                        class.borrow().ident.span(),
+                        format!("`{}` is part of an inheritance cycle.", key),
+                    );
+                    match error {
+                        Some(ref mut e) => e.combine(key_error),
+                        None => error = Some(key_error),
+                    }
+                }
+            }
+            if let Some(full_error) = error {
+                return Err(full_error);
+            } else {
+                panic!(
+                    "Internal State Error: Dependency graph has a cycle but no errors were generated."
+                )
+            }
+        }
+        Ok(output)
+    }
+
     pub fn construct(block: MacroBlock) -> syn::Result<Self> {
         let mut classes = HashMap::new();
         for class in block.definitions {
@@ -36,7 +67,7 @@ impl MacroInformation {
             }
             classes.insert(
                 class.class_ident.to_string(),
-                ClassInformation::construct(class)?,
+                RefCell::new(ClassInformation::construct(class)?),
             );
         }
         Ok(MacroInformation { classes })
@@ -45,49 +76,42 @@ impl MacroInformation {
     pub fn compile(&self) -> TokenStream2 {
         let MacroInformation { classes } = self;
 
-        let compiled_classes: Vec<TokenStream2> = classes.values().map(|x| x.compile()).collect();
+        let class_container = format_ident!("{}", CLASS_CONTINER_KW);
+
+        let compiled_classes: Vec<TokenStream2> =
+            classes.values().map(|x| x.borrow().compile()).collect();
+        let compiled_exports: Vec<TokenStream2> = classes
+            .values()
+            .map(|x| x.borrow().compile_export(&class_container))
+            .collect();
 
         quote! {
-            #(#compiled_classes)*
+            mod #class_container {
+                #(#compiled_classes)*
+            }
+            #(#compiled_exports)*
         }
     }
 }
 
 #[derive(Debug)]
 pub struct ClassInformation {
-    ident: Ident,
+    pub(super) ident: Ident,
     is_public: bool,
-    parents: HashSet<String>,
+    pub(super) parent: Option<String>,
     generics: Generics,
-    static_fields: HashMap<String, StaticClassFieldInformation>,
+    static_fields: HashMap<String, Rc<StaticClassFieldInformation>>,
     /// Local fields must retain order because the default constructor has to be deterministic
-    local_fields: IndexMap<String, LocalClassFieldInformation>,
-    static_methods: HashMap<String, StaticClassMethodInformation>,
-    local_methods: HashMap<String, LocalClassMethodInformation>,
+    local_fields: IndexMap<String, Rc<LocalClassFieldInformation>>,
+    static_methods: HashMap<String, Rc<StaticClassMethodInformation>>,
+    local_methods: HashMap<String, Rc<LocalClassMethodInformation>>,
 }
 
 impl ClassInformation {
     pub fn construct(class: ClassDefinition) -> syn::Result<Self> {
         let ident = class.class_ident;
         let is_public = !class.pub_kw.is_none();
-        let mut parents = HashSet::new();
-
-        if !class.parents.is_empty() {
-            return Err(syn::Error::new(
-                class.parents.span(),
-                "Inheritance is currently not supported.",
-            ));
-        }
-
-        for parent in &class.parents {
-            if parents.contains(&parent.to_string()) {
-                return Err(syn::Error::new(
-                    parent.span(),
-                    format!("Cannot inherit from `{}` twice.", parent),
-                ));
-            }
-            parents.insert(parent.to_string());
-        }
+        let parent = class.parent.map(|x| x.to_string());
         let generics = class.generics.clone();
         let mut static_fields = HashMap::new();
         let mut local_fields = IndexMap::new();
@@ -105,7 +129,10 @@ impl ClassInformation {
                                 format!("Local field `{}` is already defined", string),
                             ));
                         }
-                        local_fields.insert(string, LocalClassFieldInformation::construct(field)?);
+                        local_fields.insert(
+                            string,
+                            Rc::new(LocalClassFieldInformation::construct(field)?),
+                        );
                     } else {
                         if static_fields.contains_key(&string) {
                             return Err(syn::Error::new(
@@ -113,8 +140,10 @@ impl ClassInformation {
                                 format!("Static field `{}` is already defined", string),
                             ));
                         }
-                        static_fields
-                            .insert(string, StaticClassFieldInformation::construct(field)?);
+                        static_fields.insert(
+                            string,
+                            Rc::new(StaticClassFieldInformation::construct(field)?),
+                        );
                     }
                 }
                 ClassItem::ClassConstructor(constructor) => {
@@ -137,10 +166,10 @@ impl ClassInformation {
                     }
                     static_methods.insert(
                         owned_kw,
-                        StaticClassMethodInformation::construct_from_constructor(
+                        Rc::new(StaticClassMethodInformation::construct_from_constructor(
                             constructor,
                             &ident.to_string(),
-                        )?,
+                        )?),
                     );
                     encountered_constructor = true;
                 }
@@ -153,8 +182,10 @@ impl ClassInformation {
                                 format!("Local method `{}` is already defined", string),
                             ));
                         }
-                        local_methods
-                            .insert(string, LocalClassMethodInformation::construct(method)?);
+                        local_methods.insert(
+                            string,
+                            Rc::new(LocalClassMethodInformation::construct(method)?),
+                        );
                     } else {
                         if static_methods.contains_key(&string) {
                             return Err(syn::Error::new(
@@ -164,7 +195,7 @@ impl ClassInformation {
                         }
                         static_methods.insert(
                             string,
-                            StaticClassMethodInformation::construct_from_method(method)?,
+                            Rc::new(StaticClassMethodInformation::construct_from_method(method)?),
                         );
                     }
                 }
@@ -174,13 +205,65 @@ impl ClassInformation {
         Ok(ClassInformation {
             ident,
             is_public,
-            parents,
+            parent,
             generics,
             static_fields,
             local_fields,
             static_methods,
             local_methods,
         })
+    }
+
+    pub fn add_parent_information(
+        &mut self,
+        parent_ref: &RefCell<ClassInformation>,
+    ) -> syn::Result<()> {
+        // Process local fields, these cannot be overwritten
+        let parent = parent_ref.borrow();
+        Self::add_inhereted_loc_fields(&parent.local_fields, &mut self.local_fields)?;
+        Self::add_inhereted_overridable(&parent.static_fields, &mut self.static_fields)?;
+        Self::add_inhereted_overridable(&parent.local_methods, &mut self.local_methods)?;
+        Self::add_inhereted_overridable(&parent.static_methods, &mut self.static_methods)?;
+        Ok(())
+    }
+
+    fn add_inhereted_overridable<T>(
+        parent_items: &HashMap<String, Rc<T>>,
+        self_item: &mut HashMap<String, Rc<T>>,
+    ) -> syn::Result<()>
+    where
+        T: InheritableItem,
+    {
+        for (name, field) in parent_items {
+            if let Some(item) = self_item.get(name) {
+                // TODO: Overriding
+                return Err(syn::Error::new(
+                    item.get_ident().span(),
+                    format!("Overriding `{}` is not supported.", name),
+                ));
+            }
+            self_item.insert(name.clone(), field.clone());
+        }
+        Ok(())
+    }
+
+    fn add_inhereted_loc_fields<T>(
+        parent_items: &IndexMap<String, Rc<T>>,
+        self_item: &mut IndexMap<String, Rc<T>>,
+    ) -> syn::Result<()>
+    where
+        T: InheritableItem,
+    {
+        for (name, field) in parent_items {
+            if let Some(item) = self_item.get(name) {
+                return Err(syn::Error::new(
+                    item.get_ident().span(),
+                    format!("Overriding `{}` is not allowed.", name),
+                ));
+            }
+            self_item.insert(name.clone(), field.clone());
+        }
+        Ok(())
     }
 
     pub fn compile(&self) -> TokenStream2 {
@@ -234,7 +317,7 @@ impl ClassInformation {
 
         quote! {
             #[allow(non_snake_case)]
-            mod #ident {
+            pub mod #ident {
                 #class_visibility struct #ident #generics #where_clause {
                     #(#compiled_local_fields ,)*
                     #phantom_marker: ::std::marker::PhantomData<(#params)>
@@ -253,4 +336,14 @@ impl ClassInformation {
             }
         }
     }
+
+    pub fn compile_export(&self, class_container_ident: &Ident) -> TokenStream2 {
+        let ClassInformation { ident, .. } = self;
+        quote! { use #class_container_ident :: #ident ; }
+    }
+}
+
+pub trait InheritableItem {
+    fn get_ident(&self) -> &Ident;
+    // TODO: Add type equivalence checking.
 }

@@ -8,7 +8,10 @@ use syn::{
 
 use crate::{
     ast::items::{ClassConstructor, ClassField, ClassMethod, MethodArgument},
-    repr::keywords::{CONSTRUCTOR_KW, SELF_KW},
+    repr::{
+        class::InheritableItem,
+        keywords::{CONSTRUCTOR_KW, SELF_KW},
+    },
 };
 
 #[derive(Debug)]
@@ -215,7 +218,7 @@ impl StaticClassMethodInformation {
             );
         }
 
-        let combined_generics = merge_generics(generics, class_generics);
+        let combined_generics = merge_generics(class_generics, generics);
 
         let where_clause = &combined_generics.where_clause;
 
@@ -360,4 +363,28 @@ fn merge_generics(g1: &Generics, g2: &Generics) -> Generics {
         }
     }
     output
+}
+
+impl InheritableItem for StaticClassFieldInformation {
+    fn get_ident(&self) -> &Ident {
+        return &self.ident;
+    }
+}
+
+impl InheritableItem for LocalClassFieldInformation {
+    fn get_ident(&self) -> &Ident {
+        return &self.ident;
+    }
+}
+
+impl InheritableItem for StaticClassMethodInformation {
+    fn get_ident(&self) -> &Ident {
+        return &self.ident;
+    }
+}
+
+impl InheritableItem for LocalClassMethodInformation {
+    fn get_ident(&self) -> &Ident {
+        return &self.ident;
+    }
 }

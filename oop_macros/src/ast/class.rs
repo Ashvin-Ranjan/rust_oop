@@ -1,7 +1,6 @@
 use syn::{
     Generics, Ident, Token, braced,
     parse::{Parse, ParseStream},
-    punctuated::Punctuated,
     token::Brace,
 };
 
@@ -32,13 +31,13 @@ impl Parse for MacroBlock {
 #[derive(Debug)]
 pub struct ClassDefinition {
     pub pub_kw: Option<Token![pub]>,
-    pub class_kw: kw::class,
+    pub _class_kw: kw::class,
     pub class_ident: Ident,
     /// This includes the where clause
     pub generics: Generics,
-    pub colon: Option<Token![:]>,
-    pub parents: Punctuated<Ident, Token![+]>,
-    pub braces: Brace,
+    pub _colon: Option<Token![:]>,
+    pub parent: Option<Ident>,
+    pub _braces: Brace,
     pub items: Vec<ClassItem>,
 }
 
@@ -49,15 +48,9 @@ impl Parse for ClassDefinition {
         let class_ident = input.parse::<Ident>()?;
         let mut generics = input.call(Generics::parse)?;
         let colon = input.parse::<Option<Token![:]>>()?;
-        let mut parents = Punctuated::new();
+        let mut parent = None;
         if colon.is_some() {
-            while !input.peek(Token![where]) && !input.peek(Brace) {
-                parents.push_value(input.parse::<Ident>()?);
-                if input.peek(Token![where]) || input.peek(Brace) {
-                    break;
-                }
-                parents.push_punct(input.parse::<Token![+]>()?);
-            }
+            parent = Some(input.parse::<Ident>()?);
         }
         generics.where_clause = input.parse()?;
 
@@ -67,12 +60,12 @@ impl Parse for ClassDefinition {
 
         Ok(ClassDefinition {
             pub_kw,
-            class_kw,
+            _class_kw: class_kw,
             class_ident,
             generics,
-            colon,
-            parents,
-            braces,
+            _colon: colon,
+            parent,
+            _braces: braces,
             items,
         })
     }

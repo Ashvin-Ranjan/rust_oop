@@ -44,15 +44,15 @@ impl Parse for ClassItem {
 /// let (pub)? (static)? ident : syn::Type (= syn::Expression)? ;
 #[derive(Debug)]
 pub struct ClassField {
-    pub let_kw: Token![let],
+    pub _let_kw: Token![let],
     pub pub_kw: Option<Token![pub]>,
     pub static_kw: Option<Token![static]>,
     pub ident: Ident,
-    pub colon: Token![:],
+    pub _colon: Token![:],
     pub ty: Type,
-    pub equals: Option<Token![=]>,
+    pub _equals: Option<Token![=]>,
     pub expression: Option<Expr>,
-    pub semicolon: Token![;],
+    pub _semicolon: Token![;],
 }
 
 impl Parse for ClassField {
@@ -70,15 +70,15 @@ impl Parse for ClassField {
         }
         let semicolon = input.parse::<Token![;]>()?;
         Ok(ClassField {
-            let_kw,
+            _let_kw: let_kw,
             pub_kw,
             static_kw,
             ident,
-            colon,
+            _colon: colon,
             ty,
-            equals,
+            _equals: equals,
             expression,
-            semicolon,
+            _semicolon: semicolon,
         })
     }
 }
@@ -90,10 +90,10 @@ pub struct ClassMethod {
     pub pub_kw: Option<Token![pub]>,
     pub static_kw: Option<Token![static]>,
     pub const_kw: Option<Token![const]>,
-    pub fn_kw: Token![fn],
+    pub _fn_kw: Token![fn],
     pub ident: Ident,
     pub generics: Generics,
-    pub parenthesis: Paren,
+    pub _parenthesis: Paren,
     pub arguments: Punctuated<MethodArgument, Token![,]>,
     pub return_type: ReturnType,
     pub block: Block,
@@ -117,10 +117,10 @@ impl Parse for ClassMethod {
             pub_kw,
             static_kw,
             const_kw,
-            fn_kw,
+            _fn_kw: fn_kw,
             ident,
             generics,
-            parenthesis,
+            _parenthesis: parenthesis,
             arguments,
             return_type,
             block,
@@ -135,7 +135,7 @@ pub struct ClassConstructor {
     pub pub_kw: Option<Token![pub]>,
     pub ident: Ident,
     pub generics: Generics,
-    pub parenthesis: Paren,
+    pub _parenthesis: Paren,
     pub arguments: Punctuated<MethodArgument, Token![,]>,
     pub block: Block,
 }
@@ -154,7 +154,7 @@ impl Parse for ClassConstructor {
             pub_kw,
             ident,
             generics,
-            parenthesis,
+            _parenthesis: parenthesis,
             arguments,
             block,
         })
@@ -166,7 +166,7 @@ impl Parse for ClassConstructor {
 #[derive(Debug)]
 pub struct MethodArgument {
     pub ident: Ident,
-    pub colon: Token![:],
+    pub _colon: Token![:],
     pub ty: Type,
 }
 
@@ -175,6 +175,10 @@ impl Parse for MethodArgument {
         let ident = input.parse::<Ident>()?;
         let colon = input.parse::<Token![:]>()?;
         let ty = input.parse::<Type>()?;
-        Ok(MethodArgument { ident, colon, ty })
+        Ok(MethodArgument {
+            ident,
+            _colon: colon,
+            ty,
+        })
     }
 }

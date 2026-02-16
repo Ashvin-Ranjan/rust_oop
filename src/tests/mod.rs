@@ -1,23 +1,34 @@
 use super::*;
 
 class! {
-    pub class Gurt<T> where T: std::fmt::Display {
-        let x: T;
+    pub class Yo {
+        let pub x: i32;
+        pub static fn test_yo() {
+            println!("YO");
+        }
+        pub const fn display_yo() {
+            println!("yo...");
+        }
+    }
 
-        pub Gurt(x: T) {
-            self::_default_constructor(x)
+    pub class Gurt: Yo {
+        pub Gurt() {
+            self::_default_constructor(34)
         }
-        pub static fn test_gurt<K>(y: K) where K: std::fmt::Display {
-            println!("YO GURT: {}", y);
+        pub static fn test_gurt() {
+            test_yo();
+            println!("YO GURT");
         }
-        pub const fn display_self<K>(y: K) where K: std::fmt::Display {
-            println!("gurt... {} {}", self.x, y);
+        pub const fn display_self() {
+            self.display_yo();
+            println!("gurt...");
         }
     }
 }
 
 #[test]
 fn it_works() {
-    let gurt = Gurt::init(342);
-    gurt.display_self(343u32);
+    let gurt = Gurt::init();
+    gurt.display_self();
+    Gurt::test_gurt();
 }
