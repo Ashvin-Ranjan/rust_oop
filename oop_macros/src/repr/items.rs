@@ -9,7 +9,7 @@ use syn::{
 use crate::{
     ast::items::{ClassConstructor, ClassField, ClassMethod, MethodArgument},
     repr::{
-        class::InheritableItem,
+        class::{InheritableItem, OverridableItem},
         keywords::{CONSTRUCTOR_KW, SELF_KW},
     },
 };
@@ -17,6 +17,7 @@ use crate::{
 #[derive(Debug)]
 pub struct StaticClassFieldInformation {
     is_public: bool,
+    is_overriding: bool,
     ident: Ident,
     ty: Type,
     expression: Expr,
@@ -28,11 +29,13 @@ impl StaticClassFieldInformation {
             panic!("Internal State Error: StaticClassFieldInformation called with static field")
         }
         let is_public = !field.pub_kw.is_none();
+        let is_overriding = !field.override_kw.is_none();
         let ident = field.ident;
         let ty = field.ty;
         if let Some(expression) = field.expression {
             return Ok(StaticClassFieldInformation {
                 is_public,
+                is_overriding,
                 ident,
                 ty,
                 expression,
@@ -50,6 +53,7 @@ impl StaticClassFieldInformation {
             ident,
             ty,
             expression,
+            ..
         } = self;
 
         let field_visibility = if *is_public {
@@ -83,6 +87,12 @@ impl LocalClassFieldInformation {
             return Err(syn::Error::new(
                 field.expression.span(),
                 "Local fields cannot be assigned a value outside of methods.",
+            ));
+        }
+        if !field.override_kw.is_none() {
+            return Err(syn::Error::new(
+                field.override_kw.span(),
+                "Local fields cannot override inhereted fields.",
             ));
         }
         Ok(LocalClassFieldInformation {
@@ -123,6 +133,7 @@ impl LocalClassFieldInformation {
 pub struct StaticClassMethodInformation {
     is_public: bool,
     is_constructor: bool,
+    is_overriding: bool,
     ident: Ident,
     generics: Generics,
     args: Vec<MethodArgumentInformation>,
@@ -144,6 +155,7 @@ impl StaticClassMethodInformation {
             ));
         }
         let is_public = !method.pub_kw.is_none();
+        let is_overriding = !method.override_kw.is_none();
         let ident = method.ident;
         let generics = method.generics;
         let args = MethodArgumentInformation::construct_from_list(method.arguments, false)?;
@@ -152,6 +164,7 @@ impl StaticClassMethodInformation {
         Ok(StaticClassMethodInformation {
             is_public,
             is_constructor: false,
+            is_overriding,
             ident,
             generics,
             args,
@@ -179,6 +192,7 @@ impl StaticClassMethodInformation {
         Ok(StaticClassMethodInformation {
             is_public,
             is_constructor: true,
+            is_overriding: false,
             ident,
             generics,
             args,
@@ -196,6 +210,7 @@ impl StaticClassMethodInformation {
             args,
             return_type,
             block,
+            ..
         } = self;
 
         let field_visibility = if *is_public {
@@ -218,12 +233,10 @@ impl StaticClassMethodInformation {
             );
         }
 
-        let combined_generics = merge_generics(class_generics, generics);
-
-        let where_clause = &combined_generics.where_clause;
+        let where_clause = &generics.where_clause;
 
         quote! {
-            #field_visibility fn #ident #combined_generics (#(#args_compiled ,)*) #ret_val #where_clause #block
+            #field_visibility fn #ident #generics (#(#args_compiled ,)*) #ret_val #where_clause #block
         }
     }
 }
@@ -232,6 +245,7 @@ impl StaticClassMethodInformation {
 pub struct LocalClassMethodInformation {
     is_public: bool,
     is_constant: bool,
+    is_overriding: bool,
     ident: Ident,
     generics: Generics,
     args: Vec<MethodArgumentInformation>,
@@ -246,6 +260,7 @@ impl LocalClassMethodInformation {
         }
         let is_public = !method.pub_kw.is_none();
         let is_constant = !method.const_kw.is_none();
+        let is_overriding = !method.override_kw.is_none();
         let ident = method.ident;
         let generics = method.generics;
         let args = MethodArgumentInformation::construct_from_list(method.arguments, true)?;
@@ -255,6 +270,7 @@ impl LocalClassMethodInformation {
         Ok(LocalClassMethodInformation {
             is_public,
             is_constant,
+            is_overriding,
             ident,
             generics,
             args,
@@ -263,22 +279,15 @@ impl LocalClassMethodInformation {
         })
     }
 
-    pub fn compile(&self) -> TokenStream2 {
+    fn compile_function_definition(&self) -> TokenStream2 {
         let LocalClassMethodInformation {
-            is_public,
             is_constant,
             ident,
             generics,
             args,
             return_type,
-            block,
+            ..
         } = self;
-
-        let field_visibility = if *is_public {
-            quote! {pub}
-        } else {
-            quote! {}
-        };
 
         let reciever = if *is_constant {
             quote! {&self}
@@ -291,8 +300,50 @@ impl LocalClassMethodInformation {
         let where_clause = &generics.where_clause;
 
         quote! {
-            #field_visibility fn #ident #generics (#reciever, #(#args_compiled ,)*) #return_type #where_clause #block
+            fn #ident #generics (#reciever, #(#args_compiled ,)*) #return_type #where_clause
         }
+    }
+
+    pub fn compile(&self) -> TokenStream2 {
+        let LocalClassMethodInformation {
+            is_public, block, ..
+        } = self;
+
+        let field_visibility = if *is_public {
+            quote! {pub}
+        } else {
+            quote! {}
+        };
+
+        let function_def = self.compile_function_definition();
+
+        quote! {
+            #field_visibility #function_def #block
+        }
+    }
+
+    pub fn compile_for_trait_def(&self) -> TokenStream2 {
+        let function_def = self.compile_function_definition();
+
+        quote! {
+            #function_def;
+        }
+    }
+
+    pub fn compile_for_trait_impl(&self) -> TokenStream2 {
+        let LocalClassMethodInformation { ident, args, .. } = self;
+
+        let function_def = self.compile_function_definition();
+
+        let arg_names: Vec<&Ident> = args.iter().map(|x| &x.ident).collect();
+
+        quote! {
+            #function_def { self. #ident ( #(#arg_names ,)* ) }
+        }
+    }
+
+    pub fn is_public(&self) -> bool {
+        self.is_public
     }
 }
 
@@ -346,28 +397,19 @@ impl MethodArgumentInformation {
     }
 }
 
-/// Note, does not check for deduplication
-fn merge_generics(g1: &Generics, g2: &Generics) -> Generics {
-    let mut output = g1.clone();
-    output.params.extend(g2.params.clone());
-
-    if let Some(w2) = g2.where_clause.clone() {
-        match &mut output.where_clause {
-            Some(w1) => {
-                // Both have where clauses - extend predicates
-                w1.predicates.extend(w2.predicates);
-            }
-            None => {
-                output.where_clause = Some(w2);
-            }
-        }
-    }
-    output
-}
-
 impl InheritableItem for StaticClassFieldInformation {
     fn get_ident(&self) -> &Ident {
         return &self.ident;
+    }
+}
+
+impl OverridableItem for StaticClassFieldInformation {
+    fn get_is_overriding(&self) -> bool {
+        self.is_overriding
+    }
+
+    fn is_compatable_override(&self, _other: &Self) -> bool {
+        true
     }
 }
 
@@ -383,8 +425,28 @@ impl InheritableItem for StaticClassMethodInformation {
     }
 }
 
+impl OverridableItem for StaticClassMethodInformation {
+    fn get_is_overriding(&self) -> bool {
+        self.is_overriding
+    }
+
+    fn is_compatable_override(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
 impl InheritableItem for LocalClassMethodInformation {
     fn get_ident(&self) -> &Ident {
         return &self.ident;
+    }
+}
+
+impl OverridableItem for LocalClassMethodInformation {
+    fn get_is_overriding(&self) -> bool {
+        self.is_overriding
+    }
+
+    fn is_compatable_override(&self, _other: &Self) -> bool {
+        true
     }
 }

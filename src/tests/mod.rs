@@ -13,14 +13,15 @@ class! {
 
     pub class Gurt: Yo {
         pub Gurt() {
-            self::_default_constructor(34)
+            Self::_default_constructor(324)
+        }
+        pub static override fn test_yo() {
+            println!("gurt: yo")
         }
         pub static fn test_gurt() {
-            test_yo();
             println!("YO GURT");
         }
         pub const fn display_self() {
-            self.display_yo();
             println!("gurt...");
         }
     }
@@ -29,6 +30,9 @@ class! {
 #[test]
 fn it_works() {
     let gurt = Gurt::init();
-    gurt.display_self();
-    Gurt::test_gurt();
+    helper(&gurt);
+}
+
+fn helper(value: &dyn YoInstance) {
+    value.display_yo();
 }

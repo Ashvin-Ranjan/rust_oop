@@ -79,17 +79,13 @@ impl MacroInformation {
         let class_container = format_ident!("{}", CLASS_CONTINER_KW);
 
         let compiled_classes: Vec<TokenStream2> =
-            classes.values().map(|x| x.borrow().compile()).collect();
-        let compiled_exports: Vec<TokenStream2> = classes
-            .values()
-            .map(|x| x.borrow().compile_export(&class_container))
-            .collect();
+            classes.values().map(|x| x.borrow().compile(self)).collect();
 
         quote! {
             mod #class_container {
                 #(#compiled_classes)*
             }
-            #(#compiled_exports)*
+            use #class_container :: *;
         }
     }
 }
@@ -229,20 +225,36 @@ impl ClassInformation {
 
     fn add_inhereted_overridable<T>(
         parent_items: &HashMap<String, Rc<T>>,
-        self_item: &mut HashMap<String, Rc<T>>,
+        self_items: &mut HashMap<String, Rc<T>>,
     ) -> syn::Result<()>
     where
-        T: InheritableItem,
+        T: InheritableItem + OverridableItem,
     {
         for (name, field) in parent_items {
-            if let Some(item) = self_item.get(name) {
-                // TODO: Overriding
+            if let Some(item) = self_items.get(name) {
+                if !item.get_is_overriding() {
+                    return Err(syn::Error::new(
+                        item.get_ident().span(),
+                        "Overriding requires use of the `override` keyword.",
+                    ));
+                }
+                if !item.is_compatable_override(field) {
+                    return Err(syn::Error::new(
+                        item.get_ident().span(),
+                        format!("Cannot override with an incompatible type."),
+                    ));
+                }
+            } else {
+                self_items.insert(name.clone(), field.clone());
+            }
+        }
+        for (name, field) in self_items {
+            if field.get_is_overriding() && !parent_items.contains_key(name) {
                 return Err(syn::Error::new(
-                    item.get_ident().span(),
-                    format!("Overriding `{}` is not supported.", name),
+                    field.get_ident().span(),
+                    "Override keyword is used but nothing is being overidden.",
                 ));
             }
-            self_item.insert(name.clone(), field.clone());
         }
         Ok(())
     }
@@ -258,7 +270,7 @@ impl ClassInformation {
             if let Some(item) = self_item.get(name) {
                 return Err(syn::Error::new(
                     item.get_ident().span(),
-                    format!("Overriding `{}` is not allowed.", name),
+                    "Overriding local fields is not allowed.",
                 ));
             }
             self_item.insert(name.clone(), field.clone());
@@ -266,7 +278,7 @@ impl ClassInformation {
         Ok(())
     }
 
-    pub fn compile(&self) -> TokenStream2 {
+    pub fn compile(&self, macro_info: &MacroInformation) -> TokenStream2 {
         let ClassInformation {
             ident,
             is_public,
@@ -275,6 +287,7 @@ impl ClassInformation {
             local_fields,
             static_methods,
             local_methods,
+            parent,
             ..
         } = self;
 
@@ -315,35 +328,145 @@ impl ClassInformation {
         let phantom_marker = format_ident!("__phantom_marker{}", i);
         let params = &generics.params;
 
+        let mut parent_generics = None;
+        if let Some(par) = parent {
+            if let Some(parent_value) = macro_info.classes.get(par) {
+                parent_generics = Some(parent_value.borrow().generics.clone());
+            } else {
+                panic!(
+                    "Internal State Error: Attempting to inherit from class which does not exist."
+                )
+            }
+        }
+
+        let trait_value = self.compile_trait(parent_generics);
+        let inherited_traits = self.compile_inhereted_traits(macro_info);
+
         quote! {
-            #[allow(non_snake_case)]
-            pub mod #ident {
-                #class_visibility struct #ident #generics #where_clause {
-                    #(#compiled_local_fields ,)*
-                    #phantom_marker: ::std::marker::PhantomData<(#params)>
-                }
-                impl #generics #ident #generics #where_clause {
-                    #(#compiled_local_methods)*
-                }
+            #class_visibility struct #ident #generics #where_clause {
+                #(#compiled_local_fields ,)*
+                #phantom_marker: ::std::marker::PhantomData<(#params)>
+            }
+            impl #generics #ident #generics #where_clause {
+                #(#compiled_local_methods)*
                 #(#compiled_static_fields)*
                 #(#compiled_static_methods)*
-                fn _default_constructor #generics ( #(#compiled_local_fields_args ,)* ) -> #ident #generics #where_clause {
+                fn _default_constructor ( #(#compiled_local_fields_args ,)* ) -> #ident #generics #where_clause {
                     #ident {
                         #(#compiled_local_fields_names ,)*
                         #phantom_marker : ::std::marker::PhantomData,
                     }
                 }
             }
+            #trait_value
+            #(#inherited_traits)*
         }
     }
 
-    pub fn compile_export(&self, class_container_ident: &Ident) -> TokenStream2 {
-        let ClassInformation { ident, .. } = self;
-        quote! { use #class_container_ident :: #ident ; }
+    fn compile_trait(&self, parent_generics: Option<Generics>) -> TokenStream2 {
+        let ClassInformation {
+            ident,
+            parent,
+            local_methods,
+            generics,
+            ..
+        } = self;
+
+        let trait_ident = format_ident!("{}Instance", ident);
+
+        let trait_definitions: Vec<TokenStream2> = local_methods
+            .values()
+            .filter(|x| x.is_public())
+            .map(|x| x.compile_for_trait_def())
+            .collect();
+
+        let trait_declarations: Vec<TokenStream2> = local_methods
+            .values()
+            .filter(|x| x.is_public())
+            .map(|x| x.compile_for_trait_impl())
+            .collect();
+
+        let mut inherit = quote! {};
+        if let Some(p) = parent {
+            let parent_trait_ident = format_ident!("{}Instance", p);
+            inherit = quote! {: #parent_trait_ident}
+        }
+
+        let mut combined_generics = generics.clone();
+        if let Some(p_gen) = &parent_generics {
+            combined_generics = merge_generics(&combined_generics, p_gen);
+        }
+
+        let where_clause = &combined_generics.where_clause;
+
+        quote! {
+            pub trait #trait_ident #combined_generics #inherit #parent_generics #where_clause {
+                #(#trait_definitions)*
+            }
+            impl #combined_generics #trait_ident #combined_generics for #ident #parent_generics #where_clause {
+                #(#trait_declarations)*
+            }
+        }
+    }
+
+    fn compile_inhereted_traits(&self, macro_info: &MacroInformation) -> Vec<TokenStream2> {
+        let ClassInformation { ident, parent, .. } = self;
+
+        let mut compiled_traits = Vec::new();
+        let mut curr_parent_op = parent.clone();
+        while let Some(curr_parent) = curr_parent_op {
+            let parent = macro_info
+                .classes
+                .get(&curr_parent)
+                .expect(
+                    "Internal State Error: Unable to find class during parental implementations.",
+                )
+                .borrow();
+
+            let parent_trait_ident = format_ident!("{}Instance", curr_parent);
+            let trait_declarations: Vec<TokenStream2> = parent
+                .local_methods
+                .values()
+                .filter(|x| x.is_public())
+                .map(|x| x.compile_for_trait_impl())
+                .collect();
+
+            compiled_traits.push(quote! {
+                impl #parent_trait_ident for #ident {
+                    #(#trait_declarations)*
+                }
+            });
+            curr_parent_op = parent.parent.clone();
+        }
+
+        compiled_traits
     }
 }
 
 pub trait InheritableItem {
     fn get_ident(&self) -> &Ident;
-    // TODO: Add type equivalence checking.
+}
+
+pub trait OverridableItem {
+    fn get_is_overriding(&self) -> bool;
+    fn is_compatable_override(&self, other: &Self) -> bool;
+}
+
+/// Note, does not check for deduplication
+fn merge_generics(g1: &Generics, g2: &Generics) -> Generics {
+    let mut output = g1.clone();
+    output.params.extend(g2.params.clone());
+
+    if let Some(w2) = g2.where_clause.clone() {
+        match &mut output.where_clause {
+            Some(w1) => {
+                // Both have where clauses - extend predicates
+                w1.predicates.extend(w2.predicates);
+            }
+            None => {
+                output.where_clause = Some(w2);
+            }
+        }
+    }
+    output
 }

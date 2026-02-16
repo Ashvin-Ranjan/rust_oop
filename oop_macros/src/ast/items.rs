@@ -41,12 +41,13 @@ impl Parse for ClassItem {
 }
 
 /// Syntax for ClassField is as follows:
-/// let (pub)? (static)? ident : syn::Type (= syn::Expression)? ;
+/// let (pub)? (static)? (override)? ident : syn::Type (= syn::Expression)? ;
 #[derive(Debug)]
 pub struct ClassField {
     pub _let_kw: Token![let],
     pub pub_kw: Option<Token![pub]>,
     pub static_kw: Option<Token![static]>,
+    pub override_kw: Option<Token![override]>,
     pub ident: Ident,
     pub _colon: Token![:],
     pub ty: Type,
@@ -60,6 +61,7 @@ impl Parse for ClassField {
         let let_kw = input.parse::<Token![let]>()?;
         let pub_kw = input.parse::<Option<Token![pub]>>()?;
         let static_kw = input.parse::<Option<Token![static]>>()?;
+        let override_kw = input.parse::<Option<Token![override]>>()?;
         let ident = input.parse::<Ident>()?;
         let colon = input.parse::<Token![:]>()?;
         let ty = input.parse::<Type>()?;
@@ -73,6 +75,7 @@ impl Parse for ClassField {
             _let_kw: let_kw,
             pub_kw,
             static_kw,
+            override_kw,
             ident,
             _colon: colon,
             ty,
@@ -90,6 +93,7 @@ pub struct ClassMethod {
     pub pub_kw: Option<Token![pub]>,
     pub static_kw: Option<Token![static]>,
     pub const_kw: Option<Token![const]>,
+    pub override_kw: Option<Token![override]>,
     pub _fn_kw: Token![fn],
     pub ident: Ident,
     pub generics: Generics,
@@ -104,6 +108,7 @@ impl Parse for ClassMethod {
         let pub_kw = input.parse::<Option<Token![pub]>>()?;
         let static_kw = input.parse::<Option<Token![static]>>()?;
         let const_kw = input.parse::<Option<Token![const]>>()?;
+        let override_kw = input.parse::<Option<Token![override]>>()?;
         let fn_kw = input.parse::<Token![fn]>()?;
         let ident = input.parse::<Ident>()?;
         let mut generics = input.parse::<Generics>()?;
@@ -117,6 +122,7 @@ impl Parse for ClassMethod {
             pub_kw,
             static_kw,
             const_kw,
+            override_kw,
             _fn_kw: fn_kw,
             ident,
             generics,
