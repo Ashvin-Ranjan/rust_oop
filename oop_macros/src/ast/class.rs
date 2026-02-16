@@ -37,6 +37,7 @@ pub struct ClassDefinition {
     pub generics: Generics,
     pub _colon: Option<Token![:]>,
     pub parent: Option<Ident>,
+    pub parent_generics: Option<Generics>,
     pub _braces: Brace,
     pub items: Vec<ClassItem>,
 }
@@ -49,8 +50,10 @@ impl Parse for ClassDefinition {
         let mut generics = input.call(Generics::parse)?;
         let colon = input.parse::<Option<Token![:]>>()?;
         let mut parent = None;
+        let mut parent_generics = None;
         if colon.is_some() {
             parent = Some(input.parse::<Ident>()?);
+            parent_generics = Some(input.parse::<Generics>()?);
         }
         generics.where_clause = input.parse()?;
 
@@ -65,6 +68,7 @@ impl Parse for ClassDefinition {
             generics,
             _colon: colon,
             parent,
+            parent_generics,
             _braces: braces,
             items,
         })

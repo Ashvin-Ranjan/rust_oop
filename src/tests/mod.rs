@@ -1,7 +1,9 @@
 use super::*;
 
 class! {
-    pub class Yo {
+    pub class Root<K, T> {}
+
+    pub class Yo<T> : Root<i32, T> {
         let pub x: i32;
         pub static fn test_yo() {
             println!("YO");
@@ -11,7 +13,7 @@ class! {
         }
     }
 
-    pub class Gurt: Yo {
+    pub class Gurt<T>: Yo<T> {
         pub Gurt() {
             Self::_default_constructor(324)
         }
@@ -29,10 +31,10 @@ class! {
 
 #[test]
 fn it_works() {
-    let gurt = Gurt::init();
+    let gurt = Gurt::<i32>::init();
     helper(&gurt);
 }
 
-fn helper(value: &dyn YoInstance) {
+fn helper<T>(value: &dyn YoInstance<T>) {
     value.display_yo();
 }

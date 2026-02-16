@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use indexmap::IndexMap;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
-use syn::{Generics, Ident};
+use syn::{GenericParam, Generics, Ident, spanned::Spanned};
 
 use crate::{
     ast::{
@@ -96,6 +96,8 @@ pub struct ClassInformation {
     is_public: bool,
     pub(super) parent: Option<String>,
     generics: Generics,
+    parent_generics: Option<Generics>,
+    parent_generic_mapping: Rc<RefCell<HashMap<GenericParam, GenericParam>>>,
     static_fields: HashMap<String, Rc<StaticClassFieldInformation>>,
     /// Local fields must retain order because the default constructor has to be deterministic
     local_fields: IndexMap<String, Rc<LocalClassFieldInformation>>,
@@ -108,7 +110,8 @@ impl ClassInformation {
         let ident = class.class_ident;
         let is_public = !class.pub_kw.is_none();
         let parent = class.parent.map(|x| x.to_string());
-        let generics = class.generics.clone();
+        let generics = class.generics;
+        let parent_generics = class.parent_generics;
         let mut static_fields = HashMap::new();
         let mut local_fields = IndexMap::new();
         let mut static_methods = HashMap::new();
@@ -203,6 +206,8 @@ impl ClassInformation {
             is_public,
             parent,
             generics,
+            parent_generics,
+            parent_generic_mapping: Rc::new(RefCell::new(HashMap::new())),
             static_fields,
             local_fields,
             static_methods,
@@ -214,8 +219,30 @@ impl ClassInformation {
         &mut self,
         parent_ref: &RefCell<ClassInformation>,
     ) -> syn::Result<()> {
-        // Process local fields, these cannot be overwritten
         let parent = parent_ref.borrow();
+
+        // Handle generics
+        let generics = self.parent_generics.as_ref()
+            .expect("Internal State Error: Filling out parent information but parent generics does not exist.");
+
+        if generics.params.len() != parent.generics.params.len() {
+            return Err(syn::Error::new(
+                generics.params.span(),
+                format!(
+                    "Parent requires {} parameters but {} were provided.",
+                    parent.generics.params.len(),
+                    generics.params.len()
+                ),
+            ));
+        }
+        for i in 0..generics.params.len() {
+            self.parent_generic_mapping.borrow_mut().insert(
+                parent.generics.params[i].clone(),
+                generics.params[i].clone(),
+            );
+        }
+
+        // Add in fields
         Self::add_inhereted_loc_fields(&parent.local_fields, &mut self.local_fields)?;
         Self::add_inhereted_overridable(&parent.static_fields, &mut self.static_fields)?;
         Self::add_inhereted_overridable(&parent.local_methods, &mut self.local_methods)?;
@@ -287,7 +314,6 @@ impl ClassInformation {
             local_fields,
             static_methods,
             local_methods,
-            parent,
             ..
         } = self;
 
@@ -328,18 +354,7 @@ impl ClassInformation {
         let phantom_marker = format_ident!("__phantom_marker{}", i);
         let params = &generics.params;
 
-        let mut parent_generics = None;
-        if let Some(par) = parent {
-            if let Some(parent_value) = macro_info.classes.get(par) {
-                parent_generics = Some(parent_value.borrow().generics.clone());
-            } else {
-                panic!(
-                    "Internal State Error: Attempting to inherit from class which does not exist."
-                )
-            }
-        }
-
-        let trait_value = self.compile_trait(parent_generics);
+        let trait_value = self.compile_trait();
         let inherited_traits = self.compile_inhereted_traits(macro_info);
 
         quote! {
@@ -363,12 +378,13 @@ impl ClassInformation {
         }
     }
 
-    fn compile_trait(&self, parent_generics: Option<Generics>) -> TokenStream2 {
+    fn compile_trait(&self) -> TokenStream2 {
         let ClassInformation {
             ident,
             parent,
             local_methods,
             generics,
+            parent_generics,
             ..
         } = self;
 
@@ -389,31 +405,43 @@ impl ClassInformation {
         let mut inherit = quote! {};
         if let Some(p) = parent {
             let parent_trait_ident = format_ident!("{}Instance", p);
-            inherit = quote! {: #parent_trait_ident}
+            inherit = quote! {: #parent_trait_ident #parent_generics}
         }
 
-        let mut combined_generics = generics.clone();
-        if let Some(p_gen) = &parent_generics {
-            combined_generics = merge_generics(&combined_generics, p_gen);
-        }
-
-        let where_clause = &combined_generics.where_clause;
+        let where_clause = &generics.where_clause;
 
         quote! {
-            pub trait #trait_ident #combined_generics #inherit #parent_generics #where_clause {
+            pub trait #trait_ident #generics #inherit #where_clause {
                 #(#trait_definitions)*
             }
-            impl #combined_generics #trait_ident #combined_generics for #ident #parent_generics #where_clause {
+            impl #generics #trait_ident #generics for #ident #generics #where_clause {
                 #(#trait_declarations)*
             }
         }
     }
 
     fn compile_inhereted_traits(&self, macro_info: &MacroInformation) -> Vec<TokenStream2> {
-        let ClassInformation { ident, parent, .. } = self;
+        let ClassInformation {
+            ident,
+            parent,
+            generics,
+            parent_generics,
+            parent_generic_mapping,
+            ..
+        } = self;
 
         let mut compiled_traits = Vec::new();
         let mut curr_parent_op = parent.clone();
+
+        // We work backwards constructing mappings of generics from the current child class to its parents
+        let mut current_parent_mapping = parent_generic_mapping.clone();
+        let mut reconstructed_parent_mapping = HashMap::new();
+        if let Some(p_gen) = parent_generics {
+            for param in &p_gen.params {
+                reconstructed_parent_mapping.insert(param.clone(), param.clone());
+            }
+        }
+
         while let Some(curr_parent) = curr_parent_op {
             let parent = macro_info
                 .classes
@@ -431,8 +459,21 @@ impl ClassInformation {
                 .map(|x| x.compile_for_trait_impl())
                 .collect();
 
+            let mut parent_generics = Vec::new();
+            for generic in &parent.generics.params {
+                let mapped_generic = current_parent_mapping.borrow().get(generic).expect(
+                    "Internal State Error: Generic mapping from parent to child does not contain correct generics.",
+                ).clone();
+                let child_generic = reconstructed_parent_mapping
+                    .remove(&mapped_generic)
+                    .unwrap_or(mapped_generic.clone());
+                parent_generics.push(child_generic.clone());
+                reconstructed_parent_mapping.insert(generic.clone(), child_generic);
+            }
+            current_parent_mapping = parent.parent_generic_mapping.clone();
+
             compiled_traits.push(quote! {
-                impl #parent_trait_ident for #ident {
+                impl #generics #parent_trait_ident <#(#parent_generics ,)*> for #ident #generics {
                     #(#trait_declarations)*
                 }
             });
@@ -450,23 +491,4 @@ pub trait InheritableItem {
 pub trait OverridableItem {
     fn get_is_overriding(&self) -> bool;
     fn is_compatable_override(&self, other: &Self) -> bool;
-}
-
-/// Note, does not check for deduplication
-fn merge_generics(g1: &Generics, g2: &Generics) -> Generics {
-    let mut output = g1.clone();
-    output.params.extend(g2.params.clone());
-
-    if let Some(w2) = g2.where_clause.clone() {
-        match &mut output.where_clause {
-            Some(w1) => {
-                // Both have where clauses - extend predicates
-                w1.predicates.extend(w2.predicates);
-            }
-            None => {
-                output.where_clause = Some(w2);
-            }
-        }
-    }
-    output
 }
