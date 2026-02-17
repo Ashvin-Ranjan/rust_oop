@@ -70,6 +70,17 @@ impl MacroInformation {
                 RefCell::new(ClassInformation::construct(class)?),
             );
         }
+        for class in classes.keys() {
+            if let Some(invalid_class) = classes.get(&format!("{}Instance", class)) {
+                return Err(syn::Error::new(
+                    invalid_class.borrow().ident.span(),
+                    format!(
+                        "`{}Instance` is a reserved name (see technical details for more information on why).",
+                        class
+                    ),
+                ));
+            }
+        }
         Ok(MacroInformation { classes })
     }
 
@@ -81,12 +92,32 @@ impl MacroInformation {
         let compiled_classes: Vec<TokenStream2> =
             classes.values().map(|x| x.borrow().compile(self)).collect();
 
+        let imports: Vec<TokenStream2> = classes
+            .keys()
+            .map(|name| {
+                let ident = format_ident!("{}", name);
+                quote! { use #class_container :: #ident :: *; }
+            })
+            .collect();
+
         quote! {
             mod #class_container {
                 #(#compiled_classes)*
             }
-            use #class_container :: *;
+            #(#imports)*
         }
+    }
+
+    pub fn compile_imports(&self, exclude: String) -> Vec<TokenStream2> {
+        let MacroInformation { classes } = self;
+        classes
+            .keys()
+            .filter(|name| **name != exclude)
+            .map(|name| {
+                let ident = format_ident!("{}", name);
+                quote! { use super:: #ident :: *; }
+            })
+            .collect()
     }
 }
 
@@ -357,24 +388,31 @@ impl ClassInformation {
         let trait_value = self.compile_trait();
         let inherited_traits = self.compile_inhereted_traits(macro_info);
 
+        let imports = macro_info.compile_imports(ident.to_string());
+
         quote! {
-            #class_visibility struct #ident #generics #where_clause {
-                #(#compiled_local_fields ,)*
-                #phantom_marker: ::std::marker::PhantomData<(#params)>
-            }
-            impl #generics #ident #generics #where_clause {
-                #(#compiled_local_methods)*
-                #(#compiled_static_fields)*
-                #(#compiled_static_methods)*
-                fn _default_constructor ( #(#compiled_local_fields_args ,)* ) -> #ident #generics #where_clause {
-                    #ident {
-                        #(#compiled_local_fields_names ,)*
-                        #phantom_marker : ::std::marker::PhantomData,
+            #[allow(non_snake_case)]
+            pub mod #ident {
+                #(#imports)*
+                #class_visibility struct #ident #generics #where_clause {
+                    #(#compiled_local_fields ,)*
+                    #[doc(hidden)]
+                    #phantom_marker: ::std::marker::PhantomData<(#params)>
+                }
+                impl #generics #ident #generics #where_clause {
+                    #(#compiled_local_methods)*
+                    #(#compiled_static_fields)*
+                    #(#compiled_static_methods)*
+                    fn _default_constructor ( #(#compiled_local_fields_args ,)* ) -> #ident #generics #where_clause {
+                        #ident {
+                            #(#compiled_local_fields_names ,)*
+                            #phantom_marker : ::std::marker::PhantomData,
+                        }
                     }
                 }
+                #trait_value
+                #(#inherited_traits)*
             }
-            #trait_value
-            #(#inherited_traits)*
         }
     }
 

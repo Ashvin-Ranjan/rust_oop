@@ -1,21 +1,19 @@
 use super::*;
 
 class! {
-    pub class Root<K, T> {}
-
-    pub class Yo<T> : Root<i32, T> {
-        let pub x: i32;
+    pub class Yo {
         pub static fn test_yo() {
             println!("YO");
         }
         pub const fn display_yo() {
+            Self::test_yo();
             println!("yo...");
         }
     }
 
-    pub class Gurt<T>: Yo<T> {
+    pub class Gurt : Yo {
         pub Gurt() {
-            Self::_default_constructor(324)
+            Self::_default_constructor()
         }
         pub static override fn test_yo() {
             println!("gurt: yo")
@@ -31,10 +29,10 @@ class! {
 
 #[test]
 fn it_works() {
-    let gurt = Gurt::<i32>::init();
+    let gurt = Gurt::init();
     helper(&gurt);
 }
 
-fn helper<T>(value: &dyn YoInstance<T>) {
-    value.display_yo();
+fn helper(thing: &dyn YoInstance) {
+    thing.display_yo();
 }
