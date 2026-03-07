@@ -90,3 +90,8 @@ implementing the instance traits for each of the parents, as the generics need t
 used to edit the function signatures. A mapping to each child from its direct parent is also used to modify each of the fields and methods inherited to ensure
 they have the correct type. Finally, for each inherited function, the correct `type` declarations are inserted at the top of the function body in order to ensure
 proper typing.
+
+## Misc.
+
+There are a few additional things which the macro does, namely it scopes everything inside a module called `class_container` and also creates `use` statements at
+the end to allow for code outside of the macro but still in the file to interact with the class code while still maintaining encapsulation.
