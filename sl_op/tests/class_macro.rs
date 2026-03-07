@@ -1,6 +1,4 @@
-use std::marker::PhantomData;
-
-use super::*;
+use sl_op::class;
 
 class! {
     pub class A<K> {
@@ -48,11 +46,7 @@ class! {
 
 #[test]
 fn it_works() {
-    let thing = C::init(3);
-}
-
-fn helper(thing: &dyn YoInstance) {
-    thing.display_yo();
+    let _thing = C::init(3);
 }
 
 #[test]

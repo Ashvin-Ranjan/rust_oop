@@ -1,0 +1,19 @@
+[package]
+name = "sl_op"
+version = "0.1.0"
+edition = "2024"
+description = "The best use case for rust :)"
+keywords = ["oop", "class", "inheritance", "macro", "polymorphism"]
+categories = ["development-tools::procedural-macro-helper"]
+repository = "https://github.com/Ashvin-Ranjan/rust_oop"
+license = "MIT"
+readme = "../README.md"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+indexmap = "2.13.0"
+proc-macro2 = "1.0.105"
+quote = "1.0.43"
+syn = { version = "2.0.114", features = ["full", "parsing", "extra-traits"] }

@@ -1,7 +1,3 @@
-[package]
-name = "rust_oop"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-oop_macros = { path = "oop_macros" }
+[workspace]
+members = ["sl_op"]
+resolver = "2"
