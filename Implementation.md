@@ -5,7 +5,7 @@ Here are the implementation details for how exactly the class information is con
 ## What _is_ a Class?
 
 A class is actually a module, with a struct, and implementation for that struct, a trait, and implementation of that trait (along
-with parent traits). The items in class are seperated based on whether they are static or local (defined with `static` or not) and
+with parent traits). The items in class are separated based on whether they are static or local (defined with `static` or not) and
 if they are a method or a field. Local fields are placed in the struct, and everything else is placed in the implementation. The
 traits simply reflect back to the methods from the implementation for the struct.
 

@@ -51,8 +51,8 @@ Now if there exists an instance of `Point` called `p`, `p.x` and `p.y` would be 
 ### Methods
 
 Methods can be defined similarly to regular functions, however `sl_op` provides the additional keyword of `const`. This comes after `pub`
-and indicates that a function will not modify its own fields. A unique aspect of non-static methods is that the reciever, `&self` or `&mut self`,
-is automatically provided in the function and does not have to be included in the method arguments. Whether the reciever is mutable or not is dependent
+and indicates that a function will not modify its own fields. A unique aspect of non-static methods is that the receiver, `&self` or `&mut self`,
+is automatically provided in the function and does not have to be included in the method arguments. Whether the receiver is mutable or not is dependent
 on whether the function is `const` or not. Here is an example of a `const` and non-`const` method for `Point`:
 
 ```rs
@@ -74,7 +74,7 @@ class Point {
 The `static` keyword can be applied to both fields and methods in order to make them available class-wide as opposed to attached to a single
 instance. For fields, the `static` keyword comes after `pub` and now requires the field to be explicitly defined (it is also recommended that
 the field name is switched to all capitals). For methods, `static` also comes after `pub` and cannot be used with `const`, this is because in
-`static` functions the reciever is no longer passed, so `&self` and `&mut self` are not accessible. In order to access a `static` field or
+`static` functions the receiver is no longer passed, so `&self` and `&mut self` are not accessible. In order to access a `static` field or
 method in a class, you can use `Self::`. Here is an example of the point class from before, but with a `static` method and field:
 
 ```rs
@@ -97,7 +97,7 @@ constructor is the order of the fields in the class, and then the inherited fiel
 
 > [!CAUTION]
 > You can theoretically directly instantiate a struct instance of the class. This is not recommended for various reasons.
-> For those curious, look in the [Implementation Notes](./Implementation.md) for more techncial details on this.
+> For those curious, look in the [Implementation Notes](./Implementation.md) for more technical details on this.
 
 Since defining a constructor method is common, `sl_op` provides special constructor syntax, here is a constructor for the class `Point`:
 
@@ -177,7 +177,7 @@ fn main() {
 
 Classes can define any number of generics after their class name, and can also include a `where` clause after declaring
 inheritances. When inheriting from a class with generics, the generics will need to be passed in. Here is an example
-showing inheritance with geenrics:
+showing inheritance with generics:
 
 ```rs
 pub class A<K> {
@@ -218,31 +218,31 @@ I will attempt to fix this at some point in the future but it may take a bit.
 ### Mutli-File Structuring
 
 Theoretically having `class!` blocks across multiple files should work, but this has not been tested at all. Furthermore, due to
-scoping limitations, cross-macro inheritence is impossible because seperate macro calls cannot share the needed information for
+scoping limitations, cross-macro inheritance is impossible because separate macro calls cannot share the needed information for
 inheritance.
 
 ### Generics
 
 Generics were one of the hardest parts of this implementation and I honestly almost gave up multiple times on implementing them.
 In the end I did very regretfully slop some code up for this based on a theoretical implementation I had half-implemented previously.
-While I did look over the code and confirm its validity, there are still most likely some major holes in the implemtnation of generics,
+While I did look over the code and confirm its validity, there are still most likely some major holes in the implementation of generics,
 so use them with a lot of caution.
 
 ### Dynamic Dispatch Limitations
 
 Dynamic dispatch is currently enabled through `&dyn ClassNameInstance`. This does mean however that direct field access for dynamically-dispatched
-objects is impossible, so getters and setters is needed for this. I have been playing around with a custom vtable implementation which would completely
-supercede Rust's dynamic dispatch routine to get around this issue, however, it is still in the works (specifically generics hell).
+objects is impossible, so getters and setters are needed for this. I have been playing around with a custom vtable implementation which would completely
+supersede Rust's dynamic dispatch routine to get around this issue, however, it is still in the works (specifically generics hell).
 
 ### Debugging
 
-The Rust compiler does do a good job of identifying which tokens are the source of an error within the `class!` macro. However, there are many errors which
+The Rust compiler does a good job of identifying which tokens are the source of an error within the `class!` macro. However, there are many errors which
 will be extremely hard to debug without a good understanding of the internal structure of the `class!` macro compiler, which can be found in the
 [Implementation Details](./Implementation.md).
 
 ### Error Checking With Overrides
 
-When overriding a function, the type signatures of each function is not checked for a match. This does mean that you can override a function but take in
+When overriding a function, the type signatures of each function are not checked for a match. This does mean that you can override a function but take in
 different arguments and the `class!` macro compiler will not throw an error. Most likely an error will be thrown in the generate code for inherited trait
 implementation, however.
 
