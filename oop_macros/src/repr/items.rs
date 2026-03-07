@@ -1,18 +1,34 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{
-    Block, Expr, Generics, Ident, ReturnType, Token, Type, punctuated::Punctuated, spanned::Spanned,
+    Block, Expr, GenericArgument, Generics, Ident, ReturnType, Stmt, Token, Type,
+    punctuated::Punctuated, spanned::Spanned,
 };
 
 use crate::{
     ast::items::{ClassConstructor, ClassField, ClassMethod, MethodArgument},
     repr::{
-        class::{InheritableItem, OverridableItem},
+        class::{InheritableItem, MappableItem, OverridableItem},
+        generics::{map_expression_with_generics, map_return_type_with_generics, map_type_with_generics},
         keywords::{CONSTRUCTOR_KW, SELF_KW},
     },
 };
+
+fn build_type_alias_stmts(mapping: &HashMap<String, GenericArgument>) -> Vec<Stmt> {
+    mapping
+        .iter()
+        .filter_map(|(name, arg)| {
+            if let GenericArgument::Type(ty) = arg {
+                let ident = format_ident!("{}", name);
+                Some(syn::parse_quote! { type #ident = #ty; })
+            } else {
+                None
+            }
+        })
+        .collect()
+}
 
 #[derive(Debug)]
 pub struct StaticClassFieldInformation {
@@ -45,6 +61,16 @@ impl StaticClassFieldInformation {
             field.static_kw.span(),
             "Static fields must be initalized.",
         ))
+    }
+
+    pub fn apply_mapping(&self, mapping: &HashMap<String, GenericArgument>) -> Self {
+        StaticClassFieldInformation {
+            is_public: self.is_public,
+            is_overriding: self.is_overriding,
+            ident: self.ident.clone(),
+            ty: map_type_with_generics(&self.ty, mapping),
+            expression: map_expression_with_generics(&self.expression, mapping),
+        }
     }
 
     pub fn compile(&self) -> TokenStream2 {
@@ -100,6 +126,14 @@ impl LocalClassFieldInformation {
             ident,
             ty,
         })
+    }
+
+    pub fn apply_mapping(&self, mapping: &HashMap<String, GenericArgument>) -> Self {
+        LocalClassFieldInformation {
+            is_public: self.is_public,
+            ident: self.ident.clone(),
+            ty: map_type_with_generics(&self.ty, mapping),
+        }
     }
 
     pub fn compile(&self, show_visibility: bool) -> TokenStream2 {
@@ -201,6 +235,25 @@ impl StaticClassMethodInformation {
         })
     }
 
+    pub fn apply_mapping_with_aliases(&self, mapping: &HashMap<String, GenericArgument>, emit_body_aliases: bool) -> Self {
+        let mut new_stmts = if emit_body_aliases { build_type_alias_stmts(mapping) } else { Vec::new() };
+        new_stmts.extend(self.block.stmts.clone());
+
+        StaticClassMethodInformation {
+            is_public: self.is_public,
+            is_constructor: self.is_constructor,
+            is_overriding: self.is_overriding,
+            ident: self.ident.clone(),
+            generics: self.generics.clone(),
+            args: self.args.iter().map(|a| a.apply_mapping(mapping)).collect(),
+            return_type: self.return_type.as_ref().map(|rt| map_return_type_with_generics(rt, mapping)),
+            block: Block {
+                brace_token: self.block.brace_token,
+                stmts: new_stmts,
+            },
+        }
+    }
+
     pub fn compile(&self, class_generics: &Generics, class_ident: &Ident) -> TokenStream2 {
         let StaticClassMethodInformation {
             is_public,
@@ -277,6 +330,25 @@ impl LocalClassMethodInformation {
             return_type,
             block,
         })
+    }
+
+    pub fn apply_mapping_with_aliases(&self, mapping: &HashMap<String, GenericArgument>, emit_body_aliases: bool) -> Self {
+        let mut new_stmts = if emit_body_aliases { build_type_alias_stmts(mapping) } else { Vec::new() };
+        new_stmts.extend(self.block.stmts.clone());
+
+        LocalClassMethodInformation {
+            is_public: self.is_public,
+            is_constant: self.is_constant,
+            is_overriding: self.is_overriding,
+            ident: self.ident.clone(),
+            generics: self.generics.clone(),
+            args: self.args.iter().map(|a| a.apply_mapping(mapping)).collect(),
+            return_type: map_return_type_with_generics(&self.return_type, mapping),
+            block: Block {
+                brace_token: self.block.brace_token,
+                stmts: new_stmts,
+            },
+        }
     }
 
     fn compile_function_definition(&self) -> TokenStream2 {
@@ -360,6 +432,13 @@ impl MethodArgumentInformation {
         Ok(MethodArgumentInformation { ident, ty })
     }
 
+    pub fn apply_mapping(&self, mapping: &HashMap<String, GenericArgument>) -> Self {
+        MethodArgumentInformation {
+            ident: self.ident.clone(),
+            ty: map_type_with_generics(&self.ty, mapping),
+        }
+    }
+
     pub fn compile(&self) -> TokenStream2 {
         let MethodArgumentInformation { ident, ty } = self;
         quote! {
@@ -394,6 +473,30 @@ impl MethodArgumentInformation {
             }
         }
         Ok(args)
+    }
+}
+
+impl MappableItem for StaticClassFieldInformation {
+    fn apply_mapping(&self, mapping: &HashMap<String, GenericArgument>, _emit_body_aliases: bool) -> Self {
+        self.apply_mapping(mapping)
+    }
+}
+
+impl MappableItem for LocalClassFieldInformation {
+    fn apply_mapping(&self, mapping: &HashMap<String, GenericArgument>, _emit_body_aliases: bool) -> Self {
+        self.apply_mapping(mapping)
+    }
+}
+
+impl MappableItem for StaticClassMethodInformation {
+    fn apply_mapping(&self, mapping: &HashMap<String, GenericArgument>, emit_body_aliases: bool) -> Self {
+        self.apply_mapping_with_aliases(mapping, emit_body_aliases)
+    }
+}
+
+impl MappableItem for LocalClassMethodInformation {
+    fn apply_mapping(&self, mapping: &HashMap<String, GenericArgument>, emit_body_aliases: bool) -> Self {
+        self.apply_mapping_with_aliases(mapping, emit_body_aliases)
     }
 }
 

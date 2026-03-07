@@ -282,20 +282,26 @@ impl ClassInformation {
             ));
         }
 
-        // Add in fields
-        Self::add_inhereted_loc_fields(&parent.local_fields, &mut self.local_fields)?;
-        Self::add_inhereted_overridable(&parent.static_fields, &mut self.static_fields)?;
-        Self::add_inhereted_overridable(&parent.local_methods, &mut self.local_methods)?;
-        Self::add_inhereted_overridable(&parent.static_methods, &mut self.static_methods)?;
+        // Add in fields, applying the generic mapping so inherited items use concrete types.
+        // Only emit body type aliases when this class is fully concrete (no generic params),
+        // because type aliases in fn bodies are inner items that cannot capture outer generics.
+        let mapping = self.parent_generic_mapping.borrow().clone();
+        let emit_body_aliases = self.generics.params.is_empty();
+        Self::add_inhereted_loc_fields(&parent.local_fields, &mut self.local_fields, &mapping)?;
+        Self::add_inhereted_overridable(&parent.static_fields, &mut self.static_fields, &mapping, emit_body_aliases)?;
+        Self::add_inhereted_overridable(&parent.local_methods, &mut self.local_methods, &mapping, emit_body_aliases)?;
+        Self::add_inhereted_overridable(&parent.static_methods, &mut self.static_methods, &mapping, emit_body_aliases)?;
         Ok(())
     }
 
     fn add_inhereted_overridable<T>(
         parent_items: &HashMap<String, Rc<T>>,
         self_items: &mut HashMap<String, Rc<T>>,
+        mapping: &HashMap<String, GenericArgument>,
+        emit_body_aliases: bool,
     ) -> syn::Result<()>
     where
-        T: InheritableItem + OverridableItem,
+        T: InheritableItem + OverridableItem + MappableItem,
     {
         for (name, field) in parent_items {
             if let Some(item) = self_items.get(name) {
@@ -312,10 +318,10 @@ impl ClassInformation {
                     ));
                 }
             } else {
-                self_items.insert(name.clone(), field.clone());
+                self_items.insert(name.clone(), Rc::new(field.apply_mapping(mapping, emit_body_aliases)));
             }
         }
-        for (name, field) in self_items {
+        for (name, field) in self_items.iter() {
             if field.get_is_overriding() && !parent_items.contains_key(name) {
                 return Err(syn::Error::new(
                     field.get_ident().span(),
@@ -329,9 +335,10 @@ impl ClassInformation {
     fn add_inhereted_loc_fields<T>(
         parent_items: &IndexMap<String, Rc<T>>,
         self_item: &mut IndexMap<String, Rc<T>>,
+        mapping: &HashMap<String, GenericArgument>,
     ) -> syn::Result<()>
     where
-        T: InheritableItem,
+        T: InheritableItem + MappableItem,
     {
         for (name, field) in parent_items {
             if let Some(item) = self_item.get(name) {
@@ -340,7 +347,8 @@ impl ClassInformation {
                     "Overriding local fields is not allowed.",
                 ));
             }
-            self_item.insert(name.clone(), field.clone());
+            // Local fields have no body, so emit_body_aliases is irrelevant (false).
+            self_item.insert(name.clone(), Rc::new(field.apply_mapping(mapping, false)));
         }
         Ok(())
     }
@@ -497,9 +505,12 @@ impl ClassInformation {
                 .borrow();
 
             let parent_trait_ident = format_ident!("{}Instance", curr_parent_name);
+            // Use self's substituted copies of the parent's methods (not the parent's
+            // originals which still use the parent's generic param names like K).
             let trait_declarations: Vec<TokenStream2> = parent_info
                 .local_methods
-                .values()
+                .keys()
+                .filter_map(|name| self.local_methods.get(name))
                 .filter(|x| x.is_public())
                 .map(|x| x.compile_for_trait_impl())
                 .collect();
@@ -550,4 +561,11 @@ pub trait InheritableItem {
 pub trait OverridableItem {
     fn get_is_overriding(&self) -> bool;
     fn is_compatable_override(&self, other: &Self) -> bool;
+}
+
+pub trait MappableItem: Sized {
+    /// `emit_body_aliases`: when true, prepend `type X = Y;` stmts to function bodies.
+    /// Only set true when the inheriting class is fully concrete (no generic params),
+    /// because type aliases inside fn bodies are inner items that cannot capture outer generics.
+    fn apply_mapping(&self, mapping: &HashMap<String, GenericArgument>, emit_body_aliases: bool) -> Self;
 }

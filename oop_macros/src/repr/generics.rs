@@ -6,8 +6,8 @@ use std::collections::HashMap;
 
 use syn::{
     AngleBracketedGenericArguments, Expr, GenericArgument, GenericParam, Path, PathArguments,
-    PathSegment, Type, TypeArray, TypeGroup, TypeParen, TypePath, TypePtr, TypeReference,
-    TypeSlice, TypeTuple,
+    PathSegment, ReturnType, Type, TypeArray, TypeGroup, TypeParen, TypePath, TypePtr,
+    TypeReference, TypeSlice, TypeTuple,
 };
 
 pub fn generic_param_to_string(generic_param: &GenericParam) -> String {
@@ -136,6 +136,18 @@ pub fn map_type_with_generics(ty: &Type, mapping: &HashMap<String, GenericArgume
         }
         Type::Verbatim(_) => ty.clone(),
         _ => ty.clone(),
+    }
+}
+
+pub fn map_return_type_with_generics(
+    rt: &ReturnType,
+    mapping: &HashMap<String, GenericArgument>,
+) -> ReturnType {
+    match rt {
+        ReturnType::Default => ReturnType::Default,
+        ReturnType::Type(arrow, ty) => {
+            ReturnType::Type(*arrow, Box::new(map_type_with_generics(ty, mapping)))
+        }
     }
 }
 

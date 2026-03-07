@@ -1,11 +1,22 @@
+use std::marker::PhantomData;
+
 use super::*;
 
 class! {
-    pub class A<K> {}
+    pub class A<K> {
+        let pub val: K;
+        pub const fn touch_val() {
+            let _x = &self.val;
+        }
+    }
 
     pub class B<T> : A<(T, T)> {}
 
-    pub class C : B<u32> {}
+    pub class C : B<u32> {
+        pub C(val: u32) {
+            Self::_default_constructor((val, val))
+        }
+    }
 
     pub class D : C {}
 
@@ -37,8 +48,7 @@ class! {
 
 #[test]
 fn it_works() {
-    let gurt = Gurt::init();
-    helper(&gurt);
+    let thing = C::init(3);
 }
 
 fn helper(thing: &dyn YoInstance) {
