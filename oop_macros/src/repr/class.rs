@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use indexmap::IndexMap;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
-use syn::{GenericParam, Generics, Ident, spanned::Spanned};
+use syn::{AngleBracketedGenericArguments, GenericArgument, Generics, Ident, spanned::Spanned};
 
 use crate::{
     ast::{
@@ -11,6 +11,7 @@ use crate::{
         items::ClassItem,
     },
     repr::{
+        generics::{generic_param_to_string, map_generic_arg},
         graph::DependencyGraph,
         items::{
             LocalClassFieldInformation, LocalClassMethodInformation, StaticClassFieldInformation,
@@ -127,8 +128,8 @@ pub struct ClassInformation {
     is_public: bool,
     pub(super) parent: Option<String>,
     generics: Generics,
-    parent_generics: Option<Generics>,
-    parent_generic_mapping: Rc<RefCell<HashMap<GenericParam, GenericParam>>>,
+    parent_generics: Option<AngleBracketedGenericArguments>,
+    parent_generic_mapping: Rc<RefCell<HashMap<String, GenericArgument>>>,
     static_fields: HashMap<String, Rc<StaticClassFieldInformation>>,
     /// Local fields must retain order because the default constructor has to be deterministic
     local_fields: IndexMap<String, Rc<LocalClassFieldInformation>>,
@@ -253,24 +254,32 @@ impl ClassInformation {
         let parent = parent_ref.borrow();
 
         // Handle generics
-        let generics = self.parent_generics.as_ref()
-            .expect("Internal State Error: Filling out parent information but parent generics does not exist.");
-
-        if generics.params.len() != parent.generics.params.len() {
+        if let Some(parent_args) = &self.parent_generics {
+            if parent_args.args.len() != parent.generics.params.len() {
+                return Err(syn::Error::new(
+                    parent_args.args.span(),
+                    format!(
+                        "Parent requires {} parameters but {} were provided.",
+                        parent.generics.params.len(),
+                        parent_args.args.len()
+                    ),
+                ));
+            }
+            for (param, arg) in parent.generics.params.iter().zip(parent_args.args.iter()) {
+                let param_name = generic_param_to_string(param);
+                self.parent_generic_mapping
+                    .borrow_mut()
+                    .insert(param_name, arg.clone());
+            }
+        } else if !parent.generics.params.is_empty() {
             return Err(syn::Error::new(
-                generics.params.span(),
+                self.ident.span(),
                 format!(
-                    "Parent requires {} parameters but {} were provided.",
-                    parent.generics.params.len(),
-                    generics.params.len()
+                    "Parent `{}` requires {} generic argument(s) but none were provided.",
+                    parent.ident,
+                    parent.generics.params.len()
                 ),
             ));
-        }
-        for i in 0..generics.params.len() {
-            self.parent_generic_mapping.borrow_mut().insert(
-                parent.generics.params[i].clone(),
-                generics.params[i].clone(),
-            );
         }
 
         // Add in fields
@@ -443,7 +452,11 @@ impl ClassInformation {
         let mut inherit = quote! {};
         if let Some(p) = parent {
             let parent_trait_ident = format_ident!("{}Instance", p);
-            inherit = quote! {: #parent_trait_ident #parent_generics}
+            if let Some(pg) = parent_generics {
+                inherit = quote! { : #parent_trait_ident #pg };
+            } else {
+                inherit = quote! { : #parent_trait_ident };
+            }
         }
 
         let where_clause = &generics.where_clause;
@@ -463,7 +476,6 @@ impl ClassInformation {
             ident,
             parent,
             generics,
-            parent_generics,
             parent_generic_mapping,
             ..
         } = self;
@@ -471,51 +483,60 @@ impl ClassInformation {
         let mut compiled_traits = Vec::new();
         let mut curr_parent_op = parent.clone();
 
-        // We work backwards constructing mappings of generics from the current child class to its parents
-        let mut current_parent_mapping = parent_generic_mapping.clone();
-        let mut reconstructed_parent_mapping = HashMap::new();
-        if let Some(p_gen) = parent_generics {
-            for param in &p_gen.params {
-                reconstructed_parent_mapping.insert(param.clone(), param.clone());
-            }
-        }
+        // current_mapping: maps each direct parent's param name → GenericArgument from self's perspective
+        let mut current_mapping: HashMap<String, GenericArgument> =
+            parent_generic_mapping.borrow().clone();
 
-        while let Some(curr_parent) = curr_parent_op {
-            let parent = macro_info
+        while let Some(curr_parent_name) = curr_parent_op {
+            let parent_info = macro_info
                 .classes
-                .get(&curr_parent)
+                .get(&curr_parent_name)
                 .expect(
                     "Internal State Error: Unable to find class during parental implementations.",
                 )
                 .borrow();
 
-            let parent_trait_ident = format_ident!("{}Instance", curr_parent);
-            let trait_declarations: Vec<TokenStream2> = parent
+            let parent_trait_ident = format_ident!("{}Instance", curr_parent_name);
+            let trait_declarations: Vec<TokenStream2> = parent_info
                 .local_methods
                 .values()
                 .filter(|x| x.is_public())
                 .map(|x| x.compile_for_trait_impl())
                 .collect();
 
-            let mut parent_generics = Vec::new();
-            for generic in &parent.generics.params {
-                let mapped_generic = current_parent_mapping.borrow().get(generic).expect(
-                    "Internal State Error: Generic mapping from parent to child does not contain correct generics.",
-                ).clone();
-                let child_generic = reconstructed_parent_mapping
-                    .remove(&mapped_generic)
-                    .unwrap_or(mapped_generic.clone());
-                parent_generics.push(child_generic.clone());
-                reconstructed_parent_mapping.insert(generic.clone(), child_generic);
-            }
-            current_parent_mapping = parent.parent_generic_mapping.clone();
+            // Resolve each of this ancestor's params to a concrete arg from self's perspective
+            let resolved_args: Vec<GenericArgument> = parent_info
+                .generics
+                .params
+                .iter()
+                .map(|p| {
+                    let name = generic_param_to_string(p);
+                    current_mapping.get(&name).cloned().unwrap_or_else(|| {
+                        panic!(
+                            "Internal State Error: Generic mapping missing param `{}`",
+                            name
+                        )
+                    })
+                })
+                .collect();
 
             compiled_traits.push(quote! {
-                impl #generics #parent_trait_ident <#(#parent_generics ,)*> for #ident #generics {
+                impl #generics #parent_trait_ident <#(#resolved_args ,)*> for #ident #generics {
                     #(#trait_declarations)*
                 }
             });
-            curr_parent_op = parent.parent.clone();
+
+            // Compose: build next_mapping for grandparent by substituting current_mapping
+            // into each value of parent's mapping to its own parent
+            let mut next_mapping: HashMap<String, GenericArgument> = HashMap::new();
+            for (gp_name, parent_arg) in parent_info.parent_generic_mapping.borrow().iter() {
+                next_mapping.insert(
+                    gp_name.clone(),
+                    map_generic_arg(parent_arg.clone(), &current_mapping),
+                );
+            }
+            current_mapping = next_mapping;
+            curr_parent_op = parent_info.parent.clone();
         }
 
         compiled_traits

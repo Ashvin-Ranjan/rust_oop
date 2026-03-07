@@ -1,5 +1,5 @@
 use syn::{
-    Generics, Ident, Token, braced,
+    AngleBracketedGenericArguments, Generics, Ident, Token, braced,
     parse::{Parse, ParseStream},
     token::Brace,
 };
@@ -37,7 +37,7 @@ pub struct ClassDefinition {
     pub generics: Generics,
     pub _colon: Option<Token![:]>,
     pub parent: Option<Ident>,
-    pub parent_generics: Option<Generics>,
+    pub parent_generics: Option<AngleBracketedGenericArguments>,
     pub _braces: Brace,
     pub items: Vec<ClassItem>,
 }
@@ -53,7 +53,9 @@ impl Parse for ClassDefinition {
         let mut parent_generics = None;
         if colon.is_some() {
             parent = Some(input.parse::<Ident>()?);
-            parent_generics = Some(input.parse::<Generics>()?);
+            if input.peek(Token![<]) {
+                parent_generics = Some(input.parse::<AngleBracketedGenericArguments>()?);
+            }
         }
         generics.where_clause = input.parse()?;
 

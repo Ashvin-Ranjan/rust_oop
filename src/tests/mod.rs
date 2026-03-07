@@ -1,6 +1,14 @@
 use super::*;
 
 class! {
+    pub class A<K> {}
+
+    pub class B<T> : A<(T, T)> {}
+
+    pub class C : B<u32> {}
+
+    pub class D : C {}
+
     pub class Yo {
         pub static fn test_yo() {
             println!("YO");
@@ -35,4 +43,18 @@ fn it_works() {
 
 fn helper(thing: &dyn YoInstance) {
     thing.display_yo();
+}
+
+#[test]
+fn generic_chain_compiles() {
+    // Verify at compile time that C and D satisfy the transitively resolved trait bounds.
+    // C : B<u32> : A<(u32, u32)>, so C must implement AInstance<(u32, u32)> and BInstance<u32>.
+    fn assert_a<T: AInstance<(u32, u32)>>() {}
+    fn assert_b<T: BInstance<u32>>() {}
+
+    assert_a::<C>();
+    assert_b::<C>();
+    // D inherits from C, so it must also satisfy the same bounds.
+    assert_a::<D>();
+    assert_b::<D>();
 }
