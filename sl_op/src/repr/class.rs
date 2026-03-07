@@ -290,7 +290,13 @@ impl ClassInformation {
         Self::add_inhereted_loc_fields(&parent.local_fields, &mut self.local_fields, &mapping)?;
         Self::add_inhereted_overridable(&parent.static_fields, &mut self.static_fields, &mapping, emit_body_aliases)?;
         Self::add_inhereted_overridable(&parent.local_methods, &mut self.local_methods, &mapping, emit_body_aliases)?;
-        Self::add_inhereted_overridable(&parent.static_methods, &mut self.static_methods, &mapping, emit_body_aliases)?;
+        let inheritable_static_methods: HashMap<String, Rc<StaticClassMethodInformation>> =
+            parent.static_methods
+                .iter()
+                .filter(|(k, _)| k.as_str() != CONSTRUCTOR_KW)
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+        Self::add_inhereted_overridable(&inheritable_static_methods, &mut self.static_methods, &mapping, emit_body_aliases)?;
         Ok(())
     }
 

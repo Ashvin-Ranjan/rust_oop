@@ -11,7 +11,9 @@ use crate::{
     ast::items::{ClassConstructor, ClassField, ClassMethod, MethodArgument},
     repr::{
         class::{InheritableItem, MappableItem, OverridableItem},
-        generics::{map_expression_with_generics, map_return_type_with_generics, map_type_with_generics},
+        generics::{
+            map_expression_with_generics, map_return_type_with_generics, map_type_with_generics,
+        },
         keywords::{CONSTRUCTOR_KW, SELF_KW},
     },
 };
@@ -89,7 +91,7 @@ impl StaticClassFieldInformation {
         };
 
         quote! {
-            const #field_visibility #ident : #ty = #expression;
+            #field_visibility const #ident : #ty = #expression;
         }
     }
 }
@@ -235,8 +237,16 @@ impl StaticClassMethodInformation {
         })
     }
 
-    pub fn apply_mapping_with_aliases(&self, mapping: &HashMap<String, GenericArgument>, emit_body_aliases: bool) -> Self {
-        let mut new_stmts = if emit_body_aliases { build_type_alias_stmts(mapping) } else { Vec::new() };
+    pub fn apply_mapping_with_aliases(
+        &self,
+        mapping: &HashMap<String, GenericArgument>,
+        emit_body_aliases: bool,
+    ) -> Self {
+        let mut new_stmts = if emit_body_aliases {
+            build_type_alias_stmts(mapping)
+        } else {
+            Vec::new()
+        };
         new_stmts.extend(self.block.stmts.clone());
 
         StaticClassMethodInformation {
@@ -246,7 +256,10 @@ impl StaticClassMethodInformation {
             ident: self.ident.clone(),
             generics: self.generics.clone(),
             args: self.args.iter().map(|a| a.apply_mapping(mapping)).collect(),
-            return_type: self.return_type.as_ref().map(|rt| map_return_type_with_generics(rt, mapping)),
+            return_type: self
+                .return_type
+                .as_ref()
+                .map(|rt| map_return_type_with_generics(rt, mapping)),
             block: Block {
                 brace_token: self.block.brace_token,
                 stmts: new_stmts,
@@ -332,8 +345,16 @@ impl LocalClassMethodInformation {
         })
     }
 
-    pub fn apply_mapping_with_aliases(&self, mapping: &HashMap<String, GenericArgument>, emit_body_aliases: bool) -> Self {
-        let mut new_stmts = if emit_body_aliases { build_type_alias_stmts(mapping) } else { Vec::new() };
+    pub fn apply_mapping_with_aliases(
+        &self,
+        mapping: &HashMap<String, GenericArgument>,
+        emit_body_aliases: bool,
+    ) -> Self {
+        let mut new_stmts = if emit_body_aliases {
+            build_type_alias_stmts(mapping)
+        } else {
+            Vec::new()
+        };
         new_stmts.extend(self.block.stmts.clone());
 
         LocalClassMethodInformation {
@@ -477,25 +498,41 @@ impl MethodArgumentInformation {
 }
 
 impl MappableItem for StaticClassFieldInformation {
-    fn apply_mapping(&self, mapping: &HashMap<String, GenericArgument>, _emit_body_aliases: bool) -> Self {
+    fn apply_mapping(
+        &self,
+        mapping: &HashMap<String, GenericArgument>,
+        _emit_body_aliases: bool,
+    ) -> Self {
         self.apply_mapping(mapping)
     }
 }
 
 impl MappableItem for LocalClassFieldInformation {
-    fn apply_mapping(&self, mapping: &HashMap<String, GenericArgument>, _emit_body_aliases: bool) -> Self {
+    fn apply_mapping(
+        &self,
+        mapping: &HashMap<String, GenericArgument>,
+        _emit_body_aliases: bool,
+    ) -> Self {
         self.apply_mapping(mapping)
     }
 }
 
 impl MappableItem for StaticClassMethodInformation {
-    fn apply_mapping(&self, mapping: &HashMap<String, GenericArgument>, emit_body_aliases: bool) -> Self {
+    fn apply_mapping(
+        &self,
+        mapping: &HashMap<String, GenericArgument>,
+        emit_body_aliases: bool,
+    ) -> Self {
         self.apply_mapping_with_aliases(mapping, emit_body_aliases)
     }
 }
 
 impl MappableItem for LocalClassMethodInformation {
-    fn apply_mapping(&self, mapping: &HashMap<String, GenericArgument>, emit_body_aliases: bool) -> Self {
+    fn apply_mapping(
+        &self,
+        mapping: &HashMap<String, GenericArgument>,
+        emit_body_aliases: bool,
+    ) -> Self {
         self.apply_mapping_with_aliases(mapping, emit_body_aliases)
     }
 }

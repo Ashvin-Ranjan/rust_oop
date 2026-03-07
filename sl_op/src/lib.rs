@@ -12,7 +12,10 @@ pub fn class(item: TokenStream) -> TokenStream {
     let parsed_macro = parse_macro_input!(other as ast::class::MacroBlock);
     let macro_data = MacroInformation::pre_comp(parsed_macro);
     match macro_data {
-        Ok(macro_data) => macro_data.compile().into(),
+        Ok(macro_data) => {
+            println!("{}", macro_data.compile());
+            macro_data.compile().into()
+        }
         Err(err) => err.to_compile_error().into(),
     }
 }

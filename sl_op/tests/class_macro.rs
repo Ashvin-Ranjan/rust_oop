@@ -42,6 +42,26 @@ class! {
             println!("gurt...");
         }
     }
+
+    pub class Point {
+        let pub x: f32;
+        let pub y: f32;
+        let pub static Z_COORD: f32 = 1.0;
+        let id: usize;
+        pub const fn get_id() -> usize { self.id }
+        pub fn increment_x() { self.x += 1.0; }
+        pub static fn get_z() -> f32 { Self::Z_COORD }
+        pub Point(x: f32, y: f32, id: usize) {
+            Self::_default_constructor(x, y, id)
+        }
+    }
+    pub class Shape {
+        let sides: i32;
+        pub const fn get_sides() -> i32 { self.sides }
+    }
+    pub class Square {
+        pub const override fn get_sides() -> i32 { 4 }
+    }
 }
 
 #[test]
